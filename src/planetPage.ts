@@ -13,6 +13,13 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const Q24 = 1 << 24;
 const PALETTES: PaletteName[] = ['Deep Sea', 'Ember', 'Aurora', 'Ice'];
 const REAL_NAMES = ['Priya', 'Rahul', 'Aman', 'Neha', 'Kuber'] as const;
+const REFERENCE_HASHES: Record<(typeof REAL_NAMES)[number], { planetId: string; tileHash: string }> = {
+  Priya: { planetId: '81357026', tileHash: '9a90facd' },
+  Rahul: { planetId: '184b2ca5', tileHash: '1c470754' },
+  Aman: { planetId: 'e57d2897', tileHash: '7d0ece54' },
+  Neha: { planetId: 'ed0aa39e', tileHash: '48050231' },
+  Kuber: { planetId: '81e905b5', tileHash: '3fca3290' },
+};
 const nameHashes = new Map<string, { parameters: PlanetParameters; tileHash: string }>();
 let fixed: GPUFixedContext | undefined;
 let calibrationMs = 0;
@@ -97,7 +104,9 @@ function updateCopySummary(): void {
   ];
   for (const name of REAL_NAMES) {
     const result = nameHashes.get(name.toLowerCase());
-    lines.push(`${name}: ${result ? `${result.parameters.planetId} ${result.tileHash}` : 'not rendered on this device'}`);
+    const reference = REFERENCE_HASHES[name];
+    const observed = result ? `; this device ${result.parameters.planetId} ${result.tileHash}` : '';
+    lines.push(`${name}: expected ${reference.planetId} ${reference.tileHash}${observed}`);
   }
   copySummary = `${lines.join('\n')}\n`;
   $<HTMLButtonElement>('copy-summary').disabled = false;
