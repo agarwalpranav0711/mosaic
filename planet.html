@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mosaic name planet — draft engine v1</title>
+  <style>
+    body { margin: 2rem auto; max-width: 900px; padding: 0 1rem; background: #090d13; color: #e6edf3; font: 16px/1.5 system-ui, sans-serif; }
+    input, button { font: inherit; padding: .55rem .8rem; margin: .25rem; }
+    input { width: min(26rem, 80vw); }
+    button { cursor: pointer; }
+    pre { white-space: pre-wrap; background: #121820; padding: 1rem; border-radius: .5rem; }
+    canvas { max-width: 100%; height: auto; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Name planet <small>ENGINE_VERSION 1 — DRAFT</small></h1>
+    <label for="planet-name">Name (1–40 normalized characters)</label>
+    <input id="planet-name" type="text" maxlength="160" autocomplete="name">
+    <button id="create-planet" type="button">Create planet</button>
+    <button id="copy-summary" type="button" disabled>Copy summary</button>
+    <p id="planet-status" role="status">Initializing WebGPU…</p>
+    <div id="planet-image"></div>
+    <pre id="planet-output"></pre>
+    <details>
+      <summary>Engine validation</summary>
+      <button id="run-named" type="button">Render five named examples and verify two CPU blocks</button>
+      <button id="run-many" type="button">Run 10,000 generated names on GPU</button>
+      <pre id="validation-output"></pre>
+    </details>
+  </main>
+  <script type="module" src="/src/planetPage.ts"></script>
+</body>
+</html>

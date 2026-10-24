@@ -19,6 +19,17 @@ import type { GPUFixedContext } from './gpuTileFixed';
 import { computeTileCPUFixed, computeTileCPUFixedSubBlock } from './cpuFixed';
 import { renderTileToCanvas } from './renderer';
 import type { PaletteName, MappingMode } from './palette';
+import {
+  createPlanet,
+  ENGINE_STATUS,
+  ENGINE_VERSION,
+  PLANET_MAX_ITER,
+  PLANET_TILE_SIZE,
+  REGION_CATALOGUE_SHA256,
+} from './nameEngine';
+import { REGION_CATALOGUE } from './nameEngine';
+import type { NameRegion } from './nameEngine';
+import { fnv1a32, u16LittleEndian } from './fnv';
 
 // ── DOM helpers ──────────────────────────────────────────────────────
 
@@ -36,26 +47,6 @@ function statusTag(pass: boolean): string {
 }
 
 // ── 32-bit FNV-1a Hash ────────────────────────────────────────────────
-
-export function fnv1a32(bytes: Uint8Array): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < bytes.length; i++) {
-    hash ^= bytes[i];
-    hash = Math.imul(hash, 0x01000193);
-  }
-
-  return (hash >>> 0).toString(16).padStart(8, '0');
-}
-
-function u16LittleEndian(values: Uint32Array): Uint8Array {
-  const bytes = new Uint8Array(values.length * 2);
-  const view = new DataView(bytes.buffer);
-  for (let i = 0; i < values.length; i++) {
-    if (values[i] > 65535) throw new Error(`Iteration count exceeds u16 limit: ${values[i]}`);
-    view.setUint16(i * 2, values[i], true);
-  }
-  return bytes;
-}
 
 function u32LittleEndian(values: Uint32Array): Uint8Array {
   const bytes = new Uint8Array(values.length * 4);
@@ -112,6 +103,15 @@ interface StoredTile {
   z2Hash: string;
 }
 const storedTiles = new Map<string, StoredTile>();
+let nameSummary = '';
+let nameCalibrationMs = 0;
+const NAME_PLANET_HASHES: Record<string, string> = {
+  Priya: '9a90facd',
+  Rahul: '1c470754',
+  Aman: '7d0ece54',
+  Neha: '48050231',
+  Kuber: '3fca3290',
+};
 
 // ── Main Entry ──────────────────────────────────────────────────────
 
@@ -206,6 +206,111 @@ async function main() {
 
   setupRawExportEvents();
   setupStudioEvents();
+  const nameInput = $('planet-name') as HTMLInputElement;
+  const createNamePlanet = async (updateUrl: boolean) => {
+    if (!ctxFixed) throw new Error('Fixed-point WebGPU is not initialized.');
+    const name = nameInput.value;
+    $('planet-status').textContent = 'Computing deterministic location and rendering…';
+    const planet = await createPlanet(name, async (centerXQ24, centerYQ24, scaleQ24, maxIter) => {
+      const cfg: MosaicConfig = {
+        ...CONFIG,
+        tileSize: 64,
+        gridW: 1,
+        gridH: 1,
+        maxIter,
+        centerX: centerXQ24 / 16777216,
+        centerY: centerYQ24 / 16777216,
+        viewWidth: scaleQ24 * 64 / 16777216,
+      };
+      return (await computeTileFixed(ctxFixed!, 0, 0, cfg)).iter;
+    });
+    const renderCfg: MosaicConfig = {
+      ...CONFIG,
+      tileSize: PLANET_TILE_SIZE,
+      gridW: 1,
+      gridH: 1,
+      maxIter: PLANET_MAX_ITER,
+      centerX: planet.centerXQ24 / 16777216,
+      centerY: planet.centerYQ24 / 16777216,
+      viewWidth: planet.scale_q24 * PLANET_TILE_SIZE / 16777216,
+    };
+    if (nameCalibrationMs === 0) {
+      const start = performance.now();
+      await computeTileFixed(ctxFixed, 42, 16, CONFIG);
+      nameCalibrationMs = performance.now() - start;
+    }
+    const estimate = nameCalibrationMs * renderCfg.tileSize ** 2 * renderCfg.maxIter
+      / (CONFIG.tileSize ** 2 * CONFIG.maxIter);
+    const tile = await computeTileFixedAdaptive(ctxFixed, 0, 0, renderCfg, estimate);
+    const hash = fnv1a32(u16LittleEndian(tile.iter));
+    let blackInteriorPixels = 0;
+    for (const value of tile.iter) if (value >= PLANET_MAX_ITER) blackInteriorPixels++;
+    const areas = REGION_CATALOGUE[planet.regionIndex] as NameRegion;
+    const palette: PaletteName[] = ['Deep Sea', 'Ember', 'Aurora', 'Ice'];
+    const paletteSelect = $('select-palette') as HTMLSelectElement;
+    paletteSelect.value = palette[planet.paletteIndex];
+    const canvas = renderTileToCanvas(tile.iter, tile.z2, PLANET_TILE_SIZE, PLANET_MAX_ITER, {
+      paletteName: palette[planet.paletteIndex],
+      mappingMode: 'log',
+      cycleSpeed: 1,
+      edgeGlowIntensity: 0.8,
+      planetMode: true,
+      outputSize: 512,
+    });
+    const container = $('name-planet-canvas');
+    container.replaceChildren(canvas);
+    const parameters = {
+      ...planet,
+      fixedTileHash: hash,
+      blackInteriorFraction: blackInteriorPixels / tile.iter.length,
+      area: areas.area,
+      chunked: tile.chunked,
+      estimatedMs: tile.estimatedMs,
+    };
+    $('planet-summary').textContent = JSON.stringify(parameters, null, 2);
+    $('planet-status').textContent = `Planet ${planet.planetId}; tile FNV-1a ${hash}${tile.chunked ? ' (chunked dispatch)' : ''}.`;
+    nameSummary = [
+      `Name: ${name}`,
+      `Engine status: ${ENGINE_STATUS} v${ENGINE_VERSION}`,
+      `Catalogue SHA-256: ${REGION_CATALOGUE_SHA256}`,
+      `Region: ${planet.regionIndex} (${areas.area})`,
+      `Center Q8.24: ${planet.centerXQ24},${planet.centerYQ24}`,
+      `Width Q8.24: ${planet.widthQ24}`,
+      `Scale Q8.24: ${planet.scale_q24}`,
+      `maxIter: ${planet.maxIter}`,
+      `Counter: ${planet.counter}`,
+      `Palette index: ${planet.paletteIndex}`,
+      `Planet ID: ${planet.planetId}`,
+      `512 tile fixed FNV-1a: ${hash}`,
+      `Black interior fraction (512 tile): ${(blackInteriorPixels / tile.iter.length).toFixed(6)}`,
+      `Fallback candidate used: ${planet.fallbackUsed ? 'YES' : 'NO'}`,
+      ...Object.entries(NAME_PLANET_HASHES).map(([knownName, knownHash]) => `Reference ${knownName} fixed tile FNV-1a: ${knownHash}`),
+    ].join('\n') + '\n';
+    ($('btn-copy-name-summary') as HTMLButtonElement).disabled = false;
+    if (updateUrl) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('n', name);
+      url.searchParams.set('v', '1');
+      history.replaceState(null, '', url);
+    }
+  };
+  $('btn-create-planet').addEventListener('click', () => {
+    void createNamePlanet(true).catch((error: unknown) => {
+      $('planet-status').textContent = error instanceof Error ? error.message : String(error);
+    });
+  });
+  $('btn-copy-name-summary').addEventListener('click', () => {
+    void navigator.clipboard.writeText(nameSummary).catch((error: unknown) => {
+      $('planet-status').textContent = `Copy failed: ${error instanceof Error ? error.message : String(error)}`;
+    });
+  });
+  const query = new URLSearchParams(window.location.search);
+  if (query.get('v') === '1' && query.has('n')) {
+    nameInput.value = query.get('n') ?? '';
+    void createNamePlanet(false).catch((error: unknown) => {
+      $('planet-status').textContent = error instanceof Error ? error.message : String(error);
+    });
+  }
 }
 
 // ── Orchestrator ─────────────────────────────────────────────────────
