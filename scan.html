@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mosaic region catalogue scanner</title>
+</head>
+<body>
+  <main>
+    <h1>Region catalogue scan</h1>
+    <p>Boundary seeds come from the float GPU scout over x [-2.1, 0.6], y [-1.2, 1.2] at 500 iterations. Finalists use the fixed Q8.24 64×64 probe at 2,000 iterations; edge density is at least 5% (205 pixels with a neighboring iteration difference of 2+, enough to exclude visually uniform probes). PRNG seed 0x4d4f5341.</p>
+    <button id="self-test" type="button">Self-test (50 candidates)</button>
+    <button id="run-scan" type="button">Run scan / resume</button>
+    <button id="download-partial" type="button">Download partial</button>
+    <button id="download-final" type="button" disabled>Download regions.json</button>
+    <p id="progress" role="status" aria-live="polite">Idle.</p>
+    <pre id="funnel"></pre>
+  </main>
+  <script type="module" src="/src/scan.ts"></script>
+</body>
+</html>

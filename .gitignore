@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 *.local
+.tsupgrader/
+src/regions.progress.json
 
 # Editor directories and files
 .vscode/*
