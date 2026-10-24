@@ -6,7 +6,7 @@
 import { CONFIG, validateConfigLimits } from './config';
 import type { MosaicConfig } from './config';
 import { shaderFixedSource, shaderFixedNegativeMulProbeSource } from './shaderFixed.wgsl';
-import { floatToQ24, getScaleQ24, mulQ24 } from './cpuFixed';
+import { floatToQ24, getScaleQ24, mulQ24, NEGATIVE_Q24_PRODUCTS } from './cpuFixed';
 import type { FixedTileResult } from './cpuFixed';
 
 export interface GPUFixedContext {
@@ -25,16 +25,16 @@ export async function verifyNegativeQ24Multiplication(device: GPUDevice): Promis
   gpu: number[];
   cpu: number[];
 }> {
-  const module = device.createShaderModule({ code: shaderFixedNegativeMulProbeSource() });
+  const module = device.createShaderModule({ code: shaderFixedNegativeMulProbeSource(NEGATIVE_Q24_PRODUCTS) });
   const compilation = await module.getCompilationInfo();
   const errors = compilation.messages.filter((message) => message.type === 'error');
   if (errors.length) throw new Error(`Negative multiply WGSL failed: ${errors.map((error) => error.message).join('; ')}`);
   const pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
   const output = device.createBuffer({
-    size: 8,
+    size: NEGATIVE_Q24_PRODUCTS.length * 4,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
   });
-  const readback = device.createBuffer({ size: 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const readback = device.createBuffer({ size: NEGATIVE_Q24_PRODUCTS.length * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   const bindGroup = device.createBindGroup({
     layout: pipeline.getBindGroupLayout(0),
     entries: [{ binding: 0, resource: { buffer: output } }],
@@ -45,17 +45,14 @@ export async function verifyNegativeQ24Multiplication(device: GPUDevice): Promis
   pass.setBindGroup(0, bindGroup);
   pass.dispatchWorkgroups(1);
   pass.end();
-  encoder.copyBufferToBuffer(output, 0, readback, 0, 8);
+  encoder.copyBufferToBuffer(output, 0, readback, 0, NEGATIVE_Q24_PRODUCTS.length * 4);
   device.queue.submit([encoder.finish()]);
   await readback.mapAsync(GPUMapMode.READ);
   const gpu = Array.from(new Int32Array(readback.getMappedRange()));
   readback.unmap();
   output.destroy();
   readback.destroy();
-  const cpu = [
-    Number(mulQ24(-1n, 1n)),
-    Number(mulQ24(-16777217n, 1n)),
-  ];
+  const cpu = NEGATIVE_Q24_PRODUCTS.map(([a, b]) => Number(mulQ24(a, b)));
   if (gpu.some((value, index) => value !== cpu[index])) {
     throw new Error(`Negative Q8.24 multiplication mismatch: GPU [${gpu}], CPU [${cpu}]`);
   }

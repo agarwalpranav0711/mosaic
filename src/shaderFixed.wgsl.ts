@@ -105,14 +105,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 `;
 }
 
-export function shaderFixedNegativeMulProbeSource(): string {
+export function shaderFixedNegativeMulProbeSource(pairs: ReadonlyArray<readonly [bigint, bigint]>): string {
+  const outputs = pairs.map(([a, b], index) =>
+    `  output[${index}] = mul_q24(${a}, ${b});`,
+  ).join('\n');
   return `
 ${MUL_Q24_WGSL}
 @group(0) @binding(0) var<storage, read_write> output: array<i32>;
 @compute @workgroup_size(1)
 fn main() {
-  output[0] = mul_q24(-1, 1);
-  output[1] = mul_q24(-16777217, 1);
+${outputs}
 }
 `;
 }

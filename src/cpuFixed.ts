@@ -31,6 +31,12 @@ export function mulQ24(a: bigint, b: bigint): bigint {
   return (a * b) / Q24_ONE;
 }
 
+export const NEGATIVE_Q24_PRODUCTS: ReadonlyArray<readonly [bigint, bigint]> =
+  Array.from({ length: 20 }, (_, index) => [
+    -(Q24_ONE * BigInt(index + 1) + BigInt(index * 12345 + 1)),
+    BigInt(index + 1),
+  ] as const);
+
 export interface FixedTileResult {
   iter: Uint32Array;
   z2: Uint32Array;

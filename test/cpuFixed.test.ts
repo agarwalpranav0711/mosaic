@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CONFIG, VIEW_ZOOMED } from '../src/config';
-import { computeTileCPUFixed, computeTileCPUFixedSubBlock, mulQ24, Q24_ONE } from '../src/cpuFixed';
+import { computeTileCPUFixed, computeTileCPUFixedSubBlock, mulQ24, Q24_ONE, NEGATIVE_Q24_PRODUCTS } from '../src/cpuFixed';
 
 describe('cpuFixed (Q8.24 BigInt Reference with dual buffers)', () => {
   it('uses truncation toward zero for negative Q8.24 products, not arithmetic shift', () => {
@@ -8,6 +8,15 @@ describe('cpuFixed (Q8.24 BigInt Reference with dual buffers)', () => {
     expect(mulQ24(-1n, 1n)).toBe(0n);
     expect(negativeProduct >> 24n).toBe(-1n);
     expect(mulQ24(-Q24_ONE - 1n, 1n)).toBe(-1n);
+  });
+
+  it('keeps 20 negative-product CPU reference vectors for GPU parity checks', () => {
+    expect(NEGATIVE_Q24_PRODUCTS).toHaveLength(20);
+    for (const [a, b] of NEGATIVE_Q24_PRODUCTS) {
+      expect(a * b).toBeLessThan(0n);
+      expect(mulQ24(a, b)).toBe((a * b) / Q24_ONE);
+    }
+    expect(mulQ24(-1n, 1n)).not.toBe((-1n * 1n) >> 24n);
   });
   it('computes both iter and z2 buffers with correct lengths', () => {
     const res = computeTileCPUFixed(0, 0, CONFIG);
