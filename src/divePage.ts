@@ -1,4 +1,4 @@
-import { CONFIG } from './config';
+import { CONFIG, SITE_URL } from './config';
 import { makeDiveKeyframes } from './dive';
 import type { DiveKeyframe } from './dive';
 import { fnv1a32, u16LittleEndian } from './fnv';
@@ -711,13 +711,41 @@ function updateSoundButton(): void {
   button.setAttribute('aria-label', audioEnabled ? 'Turn sound off' : 'Turn sound on');
 }
 
+let adapterVendor = 'unknown';
+let adapterArch = 'unknown';
+
+function showWebGPUFailure(msg: string): void {
+  diveActive = false;
+  const overlay = $('webgpu-failure');
+  overlay.style.display = 'flex';
+  const p = overlay.querySelector('p');
+  if (p) p.textContent = msg;
+}
+
 async function ensureGPU(): Promise<void> {
   if (fixed) return;
-  if (!navigator.gpu) {
-    throw new Error('This browser does not expose WebGPU. Open this page in a current WebGPU-enabled browser.');
+  const isNoGpuFault = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('nogpu') === '1';
+  if (!navigator.gpu || isNoGpuFault) {
+    showWebGPUFailure('This needs WebGPU. Try a recent Chrome or Edge, or Safari 26 or newer.');
+    return;
   }
-  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-  if (!adapter) throw new Error('No WebGPU adapter is available. Try a browser or device with WebGPU enabled.');
+  let adapter: GPUAdapter | null = null;
+  try {
+    adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  } catch {
+    adapter = null;
+  }
+  if (!adapter) {
+    showWebGPUFailure('This needs WebGPU. Try a recent Chrome or Edge, or Safari 26 or newer.');
+    return;
+  }
+  try {
+    const info = (adapter as unknown as { info?: { vendor?: string; architecture?: string } }).info;
+    if (info) {
+      adapterVendor = info.vendor || 'unknown';
+      adapterArch = info.architecture || 'unknown';
+    }
+  } catch {}
   const device = await adapter.requestDevice();
   const context = await initGPUFixed(device, 8);
   fixed = context;
@@ -730,7 +758,7 @@ async function ensureGPU(): Promise<void> {
       recordStage('GPU device lost', { reason: info.reason || 'unknown', injected: injectedLoss });
       runSequence++;
       stopSwell();
-      if (diveActive) showError('The GPU device stopped during the dive. Select Retry this dive to rebuild the renderer and run it again.');
+      showWebGPUFailure('The GPU device stopped during the session. Refresh to restart WebGPU.');
     }
   }).catch((error: unknown) => {
     console.error('GPU device-loss notification failed:', error);
@@ -990,8 +1018,26 @@ function showPlanet(
   context.clearRect(0, 0, 1024, 1024);
   context.drawImage(portrait, 0, 0, 1024, 1024);
   visibleCanvas.setAttribute('aria-label', `Planet ${name}`);
-  $('landing-name').textContent = name;
   lastPlanet = { name, parameters, tile, hash, canvas: portrait };
+
+  // Debug fingerprint (?debug=1 only)
+  const isDebug = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1';
+  const debugEl = $('debug-fingerprint');
+  if (isDebug) {
+    debugEl.style.display = 'flex';
+    const text = `planetId: ${parameters.planetId} | counter: ${parameters.counter} | paletteIndex: ${parameters.paletteIndex} (${PALETTES_BY_INDEX[parameters.paletteIndex]}) | hash: 0x${hash} | adapter: ${adapterVendor}/${adapterArch}`;
+    $('debug-text').textContent = text;
+    const copyBtn = $<HTMLButtonElement>('debug-copy-btn');
+    copyBtn.onclick = () => {
+      void navigator.clipboard?.writeText(text).then(() => {
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+      });
+    };
+  } else {
+    debugEl.style.display = 'none';
+  }
+
   selectScene('landing');
   diveActive = false;
   recordStage('landing visible', { hash });
@@ -1015,6 +1061,13 @@ async function startDive(event?: Event): Promise<void> {
     return;
   }
   const displayName = input.value.normalize('NFKC').trim().replace(/\s+/gu, ' ');
+
+  // S2: Update address bar with history.replaceState
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set('n', normalizedName);
+    window.history.replaceState(null, '', url.toString());
+  } catch {}
 
   const thisRun = ++runSequence;
   diveActive = true;
@@ -1144,12 +1197,95 @@ function savePlanet(): void {
   }, 'image/png');
 }
 
+export async function buildShareCard(
+  name: string,
+  parameters: PlanetParameters,
+  tile: AdaptiveFixedTileResult,
+): Promise<HTMLCanvasElement> {
+  const card = document.createElement('canvas');
+  card.width = 1080;
+  card.height = 1350;
+  const ctx = card.getContext('2d');
+  if (!ctx) throw new Error('Could not create share card context');
+
+  // Pure black background
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, 1080, 1350);
+
+  // Render planet portrait at 1024x1024
+  const planetCanvas = renderTileToCanvas(
+    tile.iter,
+    tile.z2,
+    PLANET_TILE_SIZE,
+    parameters.maxIter,
+    renderOptions(parameters.paletteIndex, 1024, true),
+  );
+
+  // Draw planet in upper center area
+  ctx.drawImage(planetCanvas, 28, 80, 1024, 1024);
+
+  // Typography - System fonts only
+  const accent = getBrightestAccent(parameters.paletteIndex);
+
+  // Name (large)
+  const fontSize = name.length > 28 ? 38 : name.length > 16 ? 48 : 58;
+  ctx.font = `600 ${fontSize}px system-ui, -apple-system, sans-serif`;
+  ctx.fillStyle = '#f2f2f2';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(name, 540, 1155);
+
+  // Planet ID (small)
+  ctx.font = '500 24px system-ui, -apple-system, monospace';
+  ctx.fillStyle = accent;
+  ctx.fillText(`PLANET ${parameters.planetId.toUpperCase()}`, 540, 1220);
+
+  // Site URL (one subtle line)
+  ctx.font = '400 20px system-ui, -apple-system, sans-serif';
+  ctx.fillStyle = '#72747d';
+  ctx.fillText(SITE_URL, 540, 1275);
+
+  return card;
+}
+
+async function sharePlanet(): Promise<void> {
+  if (!lastPlanet) return;
+  const card = await buildShareCard(lastPlanet.name, lastPlanet.parameters, lastPlanet.tile);
+  const blob = await new Promise<Blob | null>((resolve) => card.toBlob(resolve, 'image/png'));
+  if (!blob) return;
+
+  const fileName = `${lastPlanet.name.toLowerCase().replace(/[^a-z0-9_-]/gu, '_') || 'planet'}-card.png`;
+  const file = new File([blob], fileName, { type: 'image/png' });
+
+  if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({
+        title: `${lastPlanet.name}'s Planet`,
+        text: `See ${lastPlanet.name}'s planet in the Mandelbrot set: ${SITE_URL}/?n=${encodeURIComponent(lastPlanet.name)}`,
+        files: [file],
+      });
+      return;
+    } catch {
+      // User cancelled or share error; fall through to direct download
+    }
+  }
+
+  // Fallback direct download
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function tryAnotherName(): void {
   runSequence++;
   stopSwell();
   lastPlanet = undefined;
   $<HTMLInputElement>('planet-name').value = '';
   $('name-display').textContent = '';
+  $<HTMLButtonElement>('start-button').textContent = 'Fall into your planet';
   clearPreview();
   $('app').removeAttribute('data-dive-debug');
   const url = new URL(window.location.href);
@@ -1227,12 +1363,41 @@ async function initialize(): Promise<void> {
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
   });
+  let initialQueryName = '';
+  try {
+    const rawQuery = new URLSearchParams(window.location.search).get('n');
+    if (rawQuery) {
+      try {
+        initialQueryName = decodeURIComponent(rawQuery);
+      } catch {
+        initialQueryName = rawQuery;
+      }
+      try {
+        normalizeName(initialQueryName);
+        const input = $<HTMLInputElement>('planet-name');
+        input.value = initialQueryName;
+        $('name-display').textContent = initialQueryName;
+        const startBtn = $<HTMLButtonElement>('start-button');
+        startBtn.textContent = `See ${initialQueryName}'s planet`;
+        void ensureGPU().then(() => {
+          void runLivePreview(initialQueryName);
+        });
+      } catch {
+        // Invalid query name; leave blank
+      }
+    }
+  } catch {}
+
   $<HTMLInputElement>('planet-name').addEventListener('input', (event) => {
     const val = (event.currentTarget as HTMLInputElement).value;
     $('name-display').textContent = val;
     setStatus('');
     $('name-control').classList.remove('invalid');
     assertStartButtonHitTest();
+
+    if (!initialQueryName || val !== initialQueryName) {
+      $<HTMLButtonElement>('start-button').textContent = 'Fall into your planet';
+    }
 
     clearTimeout(previewTimer);
     if (!val.trim()) {
@@ -1247,6 +1412,7 @@ async function initialize(): Promise<void> {
     }, 350);
   });
   $<HTMLButtonElement>('save-button').addEventListener('click', savePlanet);
+  $<HTMLButtonElement>('share-button').addEventListener('click', () => { void sharePlanet(); });
   $<HTMLButtonElement>('again-button').addEventListener('click', tryAnotherName);
   $<HTMLButtonElement>('restart-button').addEventListener('click', () => { void restart(); });
   $<HTMLButtonElement>('sound-toggle').addEventListener('click', () => {
@@ -1312,6 +1478,13 @@ async function initialize(): Promise<void> {
         const probe = await withGPULock(() => computeTileFixedAdaptive(fixed!, 0, 0, config, 0));
         return probe.iter;
       });
+    },
+    buildShareCardForTest: async (name: string) => {
+      const p = await (window as unknown as { __mosaicHomeTest: { computeFinalPlanet: (n: string) => Promise<PlanetParameters> } }).__mosaicHomeTest.computeFinalPlanet(name);
+      const keyframes = makeDiveKeyframes(p);
+      const finalKf = keyframes[keyframes.length - 1];
+      const tile = await calibratedTile(finalKf);
+      return await buildShareCard(name, p, tile);
     },
   };
 

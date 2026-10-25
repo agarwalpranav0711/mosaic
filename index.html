@@ -4,8 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
-  <meta name="description" content="Name a planet in the Mandelbrot set and fall into it.">
-  <title>Fall into your planet</title>
+  <meta name="description" content="Name a planet in the Mandelbrot set and fall into it. Deterministic fixed-point WebGPU rendering.">
+  <title>Fall into your planet — Mandelbrot Mosaic</title>
+  <meta property="og:title" content="Fall into your planet — Mandelbrot Mosaic">
+  <meta property="og:description" content="Name a planet in the Mandelbrot set and fall into it. Deterministic fixed-point WebGPU rendering.">
+  <meta property="og:image" content="https://mosaic.vercel.app/og-preview.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:url" content="https://mosaic.vercel.app/">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Fall into your planet — Mandelbrot Mosaic">
+  <meta name="twitter:description" content="Name a planet in the Mandelbrot set and fall into it. Deterministic fixed-point WebGPU rendering.">
+  <meta name="twitter:image" content="https://mosaic.vercel.app/og-preview.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Noto+Sans+Arabic:wght@400;600&family=Noto+Sans+Devanagari:wght@400;600&family=Noto+Sans+SC:wght@400;600&family=Noto+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -433,6 +444,102 @@
     #again-button:active { transform: scale(0.98); }
     #again-button:focus-visible { outline: 2px solid #ffffff; outline-offset: 4px; }
 
+    #share-button {
+      min-height: 48px;
+      height: 48px;
+      min-width: 180px;
+      padding: 0 24px;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.07);
+      color: var(--ink);
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      pointer-events: auto;
+      touch-action: manipulation;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: border-color 200ms ease, background 200ms ease, transform 150ms ease;
+    }
+    #share-button:hover {
+      border-color: rgba(255, 255, 255, 0.6);
+      background: rgba(255, 255, 255, 0.12);
+    }
+    #share-button:active { transform: scale(0.98); }
+    #share-button:focus-visible { outline: 2px solid #ffffff; outline-offset: 4px; }
+
+    #privacy-line {
+      margin: 10px 0 0;
+      font-size: 11.5px;
+      line-height: 1.5;
+      color: #72747d;
+      max-width: 44ch;
+      text-align: center;
+      pointer-events: none;
+    }
+
+    #debug-fingerprint {
+      margin-top: 10px;
+      padding: 8px 14px;
+      background: rgba(14, 15, 18, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      max-width: 92vw;
+    }
+    #debug-text {
+      margin: 0;
+      font-family: monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      color: #b0b2ba;
+      text-align: center;
+      word-break: break-all;
+    }
+    #debug-copy-btn {
+      font-size: 11px;
+      color: #f2f2f2;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 4px;
+      padding: 3px 10px;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    #debug-copy-btn:hover { background: rgba(255, 255, 255, 0.18); }
+
+    #webgpu-failure {
+      position: absolute;
+      inset: 0;
+      background: #000000;
+      z-index: 999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+      color: #f2f2f2;
+    }
+    #webgpu-failure h1 {
+      font-size: 24px;
+      font-weight: 500;
+      margin: 0 0 12px;
+      color: #ffffff;
+    }
+    #webgpu-failure p {
+      font-size: 15px;
+      color: #999999;
+      max-width: 36ch;
+      line-height: 1.6;
+      margin: 0;
+    }
+
     #error-state { gap: 14px; }
     #error-title { margin: 0; color: var(--ink); font-size: 20px; font-weight: 500; }
     #error-message { max-width: 34ch; margin: 0; color: var(--quiet); line-height: 1.6; }
@@ -515,9 +622,18 @@
 
     @media (max-width: 420px) {
       #entry { gap: 20px; }
-      #planet-portrait { width: min(92vw, 49svh); }
+      #planet-portrait { width: min(90vw, 42svh); }
       #landing-name { margin-bottom: 8px; }
-      #landing-actions { margin-top: 10px; gap: 10px; }
+      #landing-actions { margin-top: 10px; gap: 8px; }
+      #landing-actions button { min-height: 44px; height: 44px; font-size: 14px; }
+    }
+
+    @media (min-width: 640px) {
+      #landing-actions {
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -563,6 +679,7 @@
       <div id="entry-action">
         <button id="start-button" type="submit">Fall into your planet</button>
         <p id="status-message" role="status" aria-live="polite"></p>
+        <p id="privacy-line">Your GPU draws this for a few seconds. Your name stays on your device; if you share a link, the name is in the link.</p>
       </div>
     </form>
 
@@ -576,8 +693,18 @@
       <p id="landing-name"></p>
       <div id="landing-actions">
         <button id="save-button" type="button">Save my planet</button>
+        <button id="share-button" type="button">Share</button>
         <button id="again-button" type="button">Try another name</button>
       </div>
+      <div id="debug-fingerprint" style="display: none;">
+        <p id="debug-text"></p>
+        <button id="debug-copy-btn" type="button">Copy</button>
+      </div>
+    </section>
+
+    <section id="webgpu-failure" role="alert" style="display: none;">
+      <h1>This needs WebGPU.</h1>
+      <p>Try a recent Chrome or Edge, or Safari 26 or newer.</p>
     </section>
 
     <section id="error-state" role="alert" aria-hidden="true">
