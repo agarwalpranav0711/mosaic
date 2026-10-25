@@ -1,4 +1,4 @@
-import { CONFIG, SITE_URL } from './config';
+import { CONFIG, SITE_URL, ENGINE_VERSION } from './config';
 import { makeDiveKeyframes } from './dive';
 import type { DiveKeyframe } from './dive';
 import { fnv1a32, u16LittleEndian } from './fnv';
@@ -31,6 +31,7 @@ interface PreparedFrame {
 }
 
 interface DiveDebugReport {
+  engineVersion: number;
   normalizedName: string;
   planetId: string;
   finalPlanetHash: string;
@@ -832,6 +833,7 @@ function createDebugReport(
 ): DiveDebugReport {
   const timing = currentMedianAndP95(samples);
   return {
+    engineVersion: ENGINE_VERSION,
     normalizedName: name,
     planetId: parameters.planetId,
     finalPlanetHash: frames.at(-1)?.hash ?? '',
@@ -1025,7 +1027,7 @@ function showPlanet(
   const debugEl = $('debug-fingerprint');
   if (isDebug) {
     debugEl.style.display = 'flex';
-    const text = `planetId: ${parameters.planetId} | counter: ${parameters.counter} | paletteIndex: ${parameters.paletteIndex} (${PALETTES_BY_INDEX[parameters.paletteIndex]}) | hash: 0x${hash} | adapter: ${adapterVendor}/${adapterArch}`;
+    const text = `engine: v${ENGINE_VERSION} | planetId: ${parameters.planetId} | counter: ${parameters.counter} | paletteIndex: ${parameters.paletteIndex} (${PALETTES_BY_INDEX[parameters.paletteIndex]}) | hash: 0x${hash} | adapter: ${adapterVendor}/${adapterArch}`;
     $('debug-text').textContent = text;
     const copyBtn = $<HTMLButtonElement>('debug-copy-btn');
     copyBtn.onclick = () => {

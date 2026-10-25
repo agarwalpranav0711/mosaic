@@ -23,6 +23,7 @@ export interface MosaicConfig {
 }
 
 export const SITE_URL = 'https://mosaic-neon.vercel.app';
+export const ENGINE_VERSION = 1;
 
 /**
  * All tunable constants for Mosaic, Part 1 & 1.5.
