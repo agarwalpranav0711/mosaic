@@ -36,6 +36,7 @@ interface DiveDebugReport {
   finalPlanetHash: string;
   paletteIndex: number;
   keyframeComputeMs: number;
+  calibrationMs?: number;
   frameTimeMedianMs: number | null;
   frameTimeP95Ms: number | null;
   reducedMotion: boolean;
@@ -174,7 +175,60 @@ function drawKeyframe(frame: PreparedFrame, currentWidthQ24: number, currentXQ24
   flightContext.drawImage(frame.canvas, centerX - displaySize / 2, centerY - displaySize / 2, displaySize, displaySize);
 }
 
-function setPlanetAccent(paletteIndex: number): void {
+let maskCanvas: HTMLCanvasElement | undefined;
+let maskContext: CanvasRenderingContext2D | undefined;
+
+function drawFeatheredIncomingKeyframe(
+  frame: PreparedFrame,
+  currentWidthQ24: number,
+  currentXQ24: number,
+  currentYQ24: number,
+  side: number,
+  alpha: number,
+): void {
+  const sourceWidthQ24 = frame.keyframe.scaleQ24 * PLANET_TILE_SIZE;
+  const scale = sourceWidthQ24 / currentWidthQ24;
+  const centerX = window.innerWidth / 2 + (frame.keyframe.centerXQ24 - currentXQ24) / currentWidthQ24 * side;
+  const centerY = window.innerHeight / 2 + (frame.keyframe.centerYQ24 - currentYQ24) / currentWidthQ24 * side;
+  const displaySize = Math.round(side * scale);
+  if (displaySize <= 0) return;
+
+  const targetDim = Math.min(2048, Math.max(displaySize, 512));
+  if (!maskCanvas || maskCanvas.width !== targetDim || maskCanvas.height !== targetDim) {
+    maskCanvas = document.createElement('canvas');
+    maskCanvas.width = targetDim;
+    maskCanvas.height = targetDim;
+    maskContext = maskCanvas.getContext('2d') ?? undefined;
+  }
+  const mCtx = maskContext;
+  if (!mCtx) return;
+
+  mCtx.clearRect(0, 0, targetDim, targetDim);
+  mCtx.globalCompositeOperation = 'source-over';
+  mCtx.drawImage(frame.canvas, 0, 0, targetDim, targetDim);
+
+  // Smooth radial alpha mask matched to incoming content area
+  // Outer rectangular perimeter feathers cleanly to 0 alpha so no hard edge ever shows
+  mCtx.globalCompositeOperation = 'destination-in';
+  const radGrad = mCtx.createRadialGradient(
+    targetDim / 2, targetDim / 2, targetDim * 0.28,
+    targetDim / 2, targetDim / 2, targetDim * 0.48,
+  );
+  radGrad.addColorStop(0, 'rgba(0,0,0,1)');
+  radGrad.addColorStop(0.70, 'rgba(0,0,0,1)');
+  radGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  mCtx.fillStyle = radGrad;
+  mCtx.fillRect(0, 0, targetDim, targetDim);
+
+  flightContext.globalAlpha = alpha;
+  flightContext.drawImage(
+    maskCanvas,
+    0, 0, targetDim, targetDim,
+    centerX - displaySize / 2, centerY - displaySize / 2, displaySize, displaySize,
+  );
+}
+
+export function getBrightestAccent(paletteIndex: number): string {
   const paletteName = PALETTES_BY_INDEX[paletteIndex];
   if (!paletteName) throw new Error(`Unknown planet palette index: ${paletteIndex}`);
   const chromaticStops = PALETTES[paletteName].filter((stop) => Math.max(stop.r, stop.g, stop.b) - Math.min(stop.r, stop.g, stop.b) > 24);
@@ -184,7 +238,18 @@ function setPlanetAccent(paletteIndex: number): void {
       ? stop
       : best
   ));
-  const accent = `#${[brightest.r, brightest.g, brightest.b].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
+  return `#${[brightest.r, brightest.g, brightest.b].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
+}
+
+export async function previewPaletteIndex(name: string): Promise<number> {
+  const normalized = normalizeName(name);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`mosaic-v1:${normalized}`));
+  const bytes = new Uint8Array(digest);
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(12, true) % 4;
+}
+
+function setPlanetAccent(paletteIndex: number): void {
+  const accent = getBrightestAccent(paletteIndex);
   document.documentElement.style.setProperty('--accent', accent);
   flightCanvas.style.opacity = '1';
 }
@@ -208,15 +273,19 @@ function makeParticleName(name: string): void {
   const parent = $('gathering-particles');
   parent.replaceChildren();
   const characters = Array.from(name);
+  const total = characters.length;
   characters.forEach((character, index) => {
     const point = document.createElement('span');
     point.className = 'letter-particle';
     point.textContent = character === ' ' ? '\u00a0' : character;
-    point.style.setProperty('--from-x', `${(index - (characters.length - 1) / 2) * 22}px`);
+    const fromX = (index - (total - 1) / 2) * 20;
+    point.style.setProperty('--from-x', `${fromX}px`);
     point.style.setProperty('--from-y', '0px');
-    point.style.setProperty('--to-x', `${Math.sin(index * 2.399) * 62}px`);
-    point.style.setProperty('--to-y', `${Math.cos(index * 1.731) * 52}px`);
-    point.style.setProperty('--delay', `${Math.min(index * 17, 380)}ms`);
+    // Drift straight into the central light (#point) located at (50%, 32%)
+    // Since #gathering-particles is at (50%, 48%), target Y is -16svh
+    point.style.setProperty('--to-x', `${-fromX}px`);
+    point.style.setProperty('--to-y', '-16svh');
+    point.style.setProperty('--delay', `${Math.min(index * 24, 400)}ms`);
     parent.append(point);
   });
 }
@@ -306,15 +375,32 @@ function showError(message: string): void {
   selectScene('error');
 }
 
+let baselineOverheadMs: number | undefined;
+let aluRatePerPixelIter: number | undefined;
+
+async function calibrateGPU(ctx: GPUFixedContext): Promise<void> {
+  const tOverhead0 = performance.now();
+  await computeTileFixedAdaptive(ctx, 42, 16, { ...CONFIG, maxIter: 1 }, 0);
+  baselineOverheadMs = performance.now() - tOverhead0;
+
+  const tCalib0 = performance.now();
+  await computeTileFixedAdaptive(ctx, 42, 16, CONFIG, 0);
+  const totalCalibMs = performance.now() - tCalib0;
+
+  const aluCalibMs = Math.max(0.01, totalCalibMs - baselineOverheadMs);
+  const calibPixelIters = CONFIG.tileSize * CONFIG.tileSize * CONFIG.maxIter;
+  aluRatePerPixelIter = aluCalibMs / calibPixelIters;
+  calibrationMs = totalCalibMs;
+}
+
 async function calibratedTile(keyframe: DiveKeyframe): Promise<AdaptiveFixedTileResult> {
   if (!fixed) throw new Error('The WebGPU device is not ready. Restart the dive.');
   const cfg = configFor(keyframe);
-  if (calibrationMs === undefined) {
-    const start = performance.now();
-    await computeTileFixedAdaptive(fixed, 42, 16, CONFIG, 0);
-    calibrationMs = performance.now() - start;
+  if (aluRatePerPixelIter === undefined) {
+    await calibrateGPU(fixed);
   }
-  const estimate = calibrationMs * cfg.tileSize ** 2 * cfg.maxIter / (CONFIG.tileSize ** 2 * CONFIG.maxIter);
+  const pixelIters = cfg.tileSize ** 2 * cfg.maxIter;
+  const estimate = (baselineOverheadMs ?? 2) + (aluRatePerPixelIter ?? 0.000001) * pixelIters;
   const context = fixed;
   let timeout = 0;
   try {
@@ -332,13 +418,11 @@ async function calibratedTile(keyframe: DiveKeyframe): Promise<AdaptiveFixedTile
   }
 }
 
-function makePlanetPortrait(tile: AdaptiveFixedTileResult, parameters: PlanetParameters, name: string, hash: string): HTMLCanvasElement {
+function makePlanetPortrait(tile: AdaptiveFixedTileResult, parameters: PlanetParameters): HTMLCanvasElement {
   return renderTileToCanvas(tile.iter, tile.z2, PLANET_TILE_SIZE, PLANET_MAX_ITER, renderOptions(
     parameters.paletteIndex,
     1024,
     true,
-    name,
-    hash,
   ));
 }
 
@@ -357,6 +441,7 @@ function createDebugReport(
     finalPlanetHash: frames.at(-1)?.hash ?? '',
     paletteIndex: parameters.paletteIndex,
     keyframeComputeMs: totalMs,
+    calibrationMs,
     frameTimeMedianMs: timing.median,
     frameTimeP95Ms: timing.p95,
     reducedMotion,
@@ -425,8 +510,7 @@ function animateDive(frames: PreparedFrame[], runId: number): Promise<number[]> 
     beginSwell();
     resizeFlightCanvas();
     const started = performance.now();
-    let previousTime = started;
-    const side = Math.min(window.innerWidth, window.innerHeight);
+    const side = Math.max(window.innerWidth, window.innerHeight);
 
     // Draw first frame immediately so canvas is never blank or waiting for rAF
     flightContext.globalAlpha = 1;
@@ -464,8 +548,6 @@ function animateDive(frames: PreparedFrame[], runId: number): Promise<number[]> 
         reject(new Error('The GPU device was lost during the dive. Restart the dive to try again.'));
         return;
       }
-      frameSamples.push(now - previousTime);
-      previousTime = now;
       const raw = Math.min(1, (now - started) / DIVE_DURATION_MS);
       const progress = smoothStep(raw);
       const position = progress * (frames.length - 1);
@@ -479,20 +561,24 @@ function animateDive(frames: PreparedFrame[], runId: number): Promise<number[]> 
       const currentX = Math.round(from.keyframe.centerXQ24 + (to.keyframe.centerXQ24 - from.keyframe.centerXQ24) * local);
       const currentY = Math.round(from.keyframe.centerYQ24 + (to.keyframe.centerYQ24 - from.keyframe.centerYQ24) * local);
 
+      // Measure exact draw execution time around draw calls (D2)
+      const tDraw0 = performance.now();
       flightContext.globalAlpha = 1;
       flightContext.fillStyle = '#000000';
       flightContext.fillRect(0, 0, window.innerWidth, window.innerHeight);
       drawKeyframe(from, currentWidth, currentX, currentY, side, 1 - local);
-      if (local > 0) drawKeyframe(to, currentWidth, currentX, currentY, side, local);
+      if (local > 0) drawFeatheredIncomingKeyframe(to, currentWidth, currentX, currentY, side, local);
 
       const landing = lastPlanet;
       if (landing && progress > 0.94) {
         const fade = smoothStep((progress - 0.94) / 0.06);
         flightContext.globalAlpha = fade;
-        const portraitSide = Math.min(window.innerWidth * 0.94, window.innerHeight * 0.54, 680);
+        const portraitSide = Math.min(window.innerWidth * 0.92, window.innerHeight * 0.52, 640);
         flightContext.drawImage(landing.canvas, (window.innerWidth - portraitSide) / 2, (window.innerHeight - portraitSide) / 2, portraitSide, portraitSide);
       }
       flightContext.globalAlpha = 1;
+      const tDrawElapsed = performance.now() - tDraw0;
+      frameSamples.push(tDrawElapsed);
 
       if (new URLSearchParams(window.location.search).get('fault') === 'device-lost' && !injectedDeviceLossUsed) {
         injectedDeviceLossUsed = true;
@@ -524,6 +610,7 @@ function showPlanet(
   visibleCanvas.height = 1024;
   const context = visibleCanvas.getContext('2d');
   if (!context) throw new Error('Could not create a 2D canvas for the final planet.');
+  context.clearRect(0, 0, 1024, 1024);
   context.drawImage(portrait, 0, 0, 1024, 1024);
   visibleCanvas.setAttribute('aria-label', `Planet ${name}`);
   $('landing-name').textContent = name;
@@ -611,7 +698,7 @@ async function startDive(event?: Event): Promise<void> {
     const finalFrame = frames.at(-1);
     if (!finalFrame) throw new Error('No dive keyframes were generated.');
     const finalHash = finalFrame.hash;
-    const portrait = makePlanetPortrait(finalFrame.tile, parameters, displayName, finalHash);
+    const portrait = makePlanetPortrait(finalFrame.tile, parameters);
     lastPlanet = { name: displayName, parameters, tile: finalFrame.tile, hash: finalHash, canvas: portrait };
 
     await minGathering;
@@ -680,6 +767,9 @@ function tryAnotherName(): void {
   lastPlanet = undefined;
   $<HTMLInputElement>('planet-name').value = '';
   $('name-display').textContent = '';
+  document.documentElement.style.setProperty('--accent', '#c9c9c9');
+  $('point').style.backgroundColor = '#c9c9c9';
+  $('point').style.boxShadow = '0 0 8px 2px rgba(255, 255, 255, .3)';
   $('app').removeAttribute('data-dive-debug');
   const url = new URL(window.location.href);
   url.searchParams.delete('n');
@@ -695,7 +785,11 @@ async function restart(): Promise<void> {
   runSequence++;
   try {
     stopSwell();
-    if (!fixed) calibrationMs = undefined;
+    if (!fixed) {
+      calibrationMs = undefined;
+      baselineOverheadMs = undefined;
+      aluRatePerPixelIter = undefined;
+    }
     await ensureGPU();
     selectScene('entry');
     setStatus('Retrying with the same name.');
@@ -734,11 +828,29 @@ async function initialize(): Promise<void> {
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
   });
-  $<HTMLInputElement>('planet-name').addEventListener('input', (event) => {
-    $('name-display').textContent = (event.currentTarget as HTMLInputElement).value;
+  $<HTMLInputElement>('planet-name').addEventListener('input', async (event) => {
+    const val = (event.currentTarget as HTMLInputElement).value;
+    $('name-display').textContent = val;
     setStatus('');
     $('name-control').classList.remove('invalid');
     assertStartButtonHitTest();
+
+    if (!val.trim()) {
+      document.documentElement.style.setProperty('--accent', '#c9c9c9');
+      $('point').style.backgroundColor = '#c9c9c9';
+      $('point').style.boxShadow = '0 0 8px 2px rgba(255, 255, 255, .3)';
+      return;
+    }
+
+    try {
+      const idx = await previewPaletteIndex(val);
+      const accent = getBrightestAccent(idx);
+      document.documentElement.style.setProperty('--accent', accent);
+      $('point').style.backgroundColor = accent;
+      $('point').style.boxShadow = `0 0 10px 3px ${accent}66`;
+    } catch {
+      // Keep previous color if name normalization fails or exceeds length limit
+    }
   });
   $<HTMLButtonElement>('save-button').addEventListener('click', savePlanet);
   $<HTMLButtonElement>('again-button').addEventListener('click', tryAnotherName);
@@ -759,7 +871,9 @@ async function initialize(): Promise<void> {
   assertStartButtonHitTest();
 }
 
-void initialize().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  showError(message);
-});
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  void initialize().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    showError(message);
+  });
+}
