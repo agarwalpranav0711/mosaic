@@ -36,6 +36,73 @@
 
     #app { position: relative; width: 100%; height: 100svh; min-height: 100%; isolation: isolate; background: #000000; }
 
+    #ambient-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.38;
+      transition: opacity 600ms ease;
+    }
+
+    #ambient-satellites {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 1;
+    }
+
+    .drift-satellite {
+      position: absolute;
+      left: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      pointer-events: none;
+      user-select: none;
+      animation: drift-across linear infinite;
+      animation-duration: var(--drift-dur, 48s);
+      animation-delay: var(--drift-delay, 0s);
+      top: var(--drift-y, 10%);
+      transform-origin: center center;
+    }
+    .drift-planet {
+      border-radius: 50%;
+      box-shadow: 0 0 14px -2px rgba(255, 255, 255, 0.2);
+      display: block;
+    }
+    .drift-name {
+      font-family: "DM Sans", "Noto Sans", sans-serif;
+      font-size: 11px;
+      font-weight: 400;
+      letter-spacing: 0.02em;
+      color: rgba(255, 255, 255, 0.45);
+      white-space: nowrap;
+    }
+
+    @keyframes drift-across {
+      0% {
+        transform: translate3d(-140px, 0, 0) scale(var(--drift-scale, 0.6));
+        opacity: 0;
+      }
+      6% {
+        opacity: var(--drift-opacity, 0.65);
+      }
+      92% {
+        opacity: var(--drift-opacity, 0.65);
+      }
+      100% {
+        transform: translate3d(calc(100vw + 140px), 0, 0) scale(var(--drift-scale, 0.6));
+        opacity: 0;
+      }
+    }
+
     #flight {
       position: absolute;
       inset: 0;
@@ -44,20 +111,41 @@
       background: #000000;
       opacity: 0;
       pointer-events: none;
+      z-index: 2;
     }
 
     #point {
       position: absolute;
       left: 50%;
-      top: 32%;
-      width: 3px;
-      height: 3px;
+      top: 26%;
+      width: 4px;
+      height: 4px;
       border-radius: 50%;
       background: var(--accent, #c9c9c9);
-      box-shadow: 0 0 8px 2px rgba(255, 255, 255, .3);
+      box-shadow: 0 0 10px 3px rgba(255, 255, 255, .35);
       transform: translate(-50%, -50%);
       animation: breathe 3.8s ease-in-out infinite;
-      transition: background-color 300ms ease, box-shadow 300ms ease;
+      transition: background-color 300ms ease, box-shadow 300ms ease, opacity 350ms ease;
+      z-index: 5;
+    }
+
+    #preview-planet {
+      position: absolute;
+      left: 50%;
+      top: 26%;
+      width: clamp(80px, 13vw, 110px);
+      height: clamp(80px, 13vw, 110px);
+      border-radius: 50%;
+      transform: translate(-50%, -50%) scale(0.85);
+      opacity: 0;
+      pointer-events: none;
+      box-shadow: 0 0 28px -2px var(--accent-glow, rgba(200, 200, 200, 0.25));
+      transition: opacity 400ms cubic-bezier(0.16, 1, 0.3, 1), transform 400ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 400ms ease;
+      z-index: 5;
+    }
+    #preview-planet.visible {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
     }
 
     #entry, #gathering, #landing, #error-state {
@@ -160,25 +248,40 @@
       z-index: 11;
       min-height: 48px;
       height: 48px;
-      padding: 0 32px;
-      border: 1px solid transparent;
+      padding: 0 36px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
       border-radius: 9999px;
-      background: #ececec;
-      color: #0c0c0c;
+      background: #111216;
+      color: #f0f0f0;
       font-size: 15px;
       font-weight: 500;
+      letter-spacing: -0.01em;
       cursor: pointer;
       pointer-events: auto;
       touch-action: manipulation;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      transition: background-color 200ms ease, transform 150ms ease, opacity 200ms ease;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 2px 10px rgba(0, 0, 0, 0.7), 0 0 18px -4px var(--accent-glow, rgba(200, 200, 200, 0.2));
+      transition: background-color 200ms ease, border-color 250ms ease, box-shadow 250ms ease, transform 150ms ease, opacity 200ms ease;
     }
-    #start-button:hover { background: #ffffff; }
-    #start-button:active { transform: scale(0.98); }
-    #start-button:focus-visible { outline: 2px solid #ffffff; outline-offset: 4px; }
-    #start-button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #start-button:hover {
+      background: #181920;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent), 0 4px 16px rgba(0, 0, 0, 0.8), 0 0 22px -2px var(--accent-glow, rgba(200, 200, 200, 0.35));
+    }
+    #start-button:active {
+      transform: scale(0.98);
+      background: #0f1013;
+    }
+    #start-button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 4px;
+    }
+    #start-button:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
 
     #sound-toggle {
       position: absolute;
@@ -434,13 +537,19 @@
         filter: none !important;
       }
       #point { transition: none !important; }
+      #ambient-canvas { animation: none !important; }
+      #ambient-satellites { display: none !important; }
+      #preview-planet { transition: none !important; }
     }
   </style>
 </head>
 <body>
   <main id="app">
+    <canvas id="ambient-canvas" aria-hidden="true"></canvas>
+    <div id="ambient-satellites" aria-hidden="true"></div>
     <canvas id="flight" aria-hidden="true"></canvas>
     <span id="point" aria-hidden="true"></span>
+    <canvas id="preview-planet" width="192" height="192" aria-hidden="true"></canvas>
     <button id="sound-toggle" type="button" aria-pressed="false" aria-label="Turn sound on">Sound off</button>
 
     <form id="entry">

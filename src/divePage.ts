@@ -70,6 +70,37 @@ let frameSamples: number[] = [];
 let flightCanvas: HTMLCanvasElement;
 let flightContext: CanvasRenderingContext2D;
 
+let ambientCanvas: HTMLCanvasElement;
+let ambientContext: CanvasRenderingContext2D;
+let ambientSatellites: HTMLElement;
+let ambientActive = true;
+let ambientRafId = 0;
+let ambientDrawSamples: number[] = [];
+let ambientKeyframes: Array<{ canvas: HTMLCanvasElement; scale_q24: number; centerX: number; centerY: number }> = [];
+let ambientStarted = 0;
+
+export interface SamplePlanetInfo {
+  name: string;
+  planetId: string;
+  paletteIndex: number;
+  canvas: HTMLCanvasElement;
+}
+let samplePlanetsCache: SamplePlanetInfo[] = [];
+
+let previewTimer: number | undefined;
+let previewCounter = 0;
+let livePreviewEnabled = true;
+let previewTimings: number[] = [];
+let consecutiveSlowPreviews = 0;
+let cachedPreviewPlanet: { name: string; parameters: PlanetParameters } | undefined;
+
+let gpuOperationQueue: Promise<unknown> = Promise.resolve();
+export async function withGPULock<T>(op: () => Promise<T>): Promise<T> {
+  const result = gpuOperationQueue.then(op, op);
+  gpuOperationQueue = result.catch(() => {});
+  return result;
+}
+
 function setStatus(message: string): void {
   $('status-message').textContent = message;
 }
@@ -119,6 +150,30 @@ function selectScene(scene: 'entry' | 'gathering' | 'flight' | 'landing' | 'erro
   }
   if (scene === 'flight') {
     flightCanvas.style.opacity = '1';
+    stopAmbientWorld();
+    if (ambientCanvas) ambientCanvas.style.display = 'none';
+    if (ambientSatellites) ambientSatellites.style.display = 'none';
+    $<HTMLCanvasElement>('preview-planet').style.display = 'none';
+  } else if (scene === 'landing' || scene === 'error') {
+    stopAmbientWorld();
+    if (ambientCanvas) ambientCanvas.style.display = 'none';
+    if (ambientSatellites) ambientSatellites.style.display = 'none';
+    $<HTMLCanvasElement>('preview-planet').style.display = 'none';
+  } else if (scene === 'gathering') {
+    if (ambientCanvas) ambientCanvas.style.opacity = '0';
+    if (ambientSatellites) ambientSatellites.style.opacity = '0';
+    $<HTMLCanvasElement>('preview-planet').classList.remove('visible');
+  } else if (scene === 'entry') {
+    if (ambientCanvas) {
+      ambientCanvas.style.display = 'block';
+      ambientCanvas.style.opacity = '0.38';
+    }
+    if (ambientSatellites) {
+      ambientSatellites.style.display = 'block';
+      ambientSatellites.style.opacity = '1';
+    }
+    $<HTMLCanvasElement>('preview-planet').style.display = 'block';
+    startAmbientLoop();
   }
   $('point').style.display = scene === 'entry' || scene === 'gathering' ? 'block' : 'none';
   $('sound-toggle').style.display = scene === 'landing' || scene === 'error' ? 'none' : 'block';
@@ -251,8 +306,320 @@ export async function previewPaletteIndex(name: string): Promise<number> {
 function setPlanetAccent(paletteIndex: number): void {
   const accent = getBrightestAccent(paletteIndex);
   document.documentElement.style.setProperty('--accent', accent);
+  document.documentElement.style.setProperty('--accent-glow', `${accent}55`);
   $('point').style.backgroundColor = accent;
   $('point').style.boxShadow = `0 0 10px 3px ${accent}66`;
+}
+
+function resizeAmbientCanvas(): void {
+  if (!ambientCanvas || !ambientContext) return;
+  const bounds = $('app').getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  ambientCanvas.width = Math.round(bounds.width * dpr);
+  ambientCanvas.height = Math.round(bounds.height * dpr);
+  ambientContext.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+export async function initAmbientWorld(gpuCtx: GPUFixedContext): Promise<void> {
+  ambientCanvas = $<HTMLCanvasElement>('ambient-canvas');
+  const ctx = ambientCanvas.getContext('2d');
+  if (!ctx) return;
+  ambientContext = ctx;
+  ambientSatellites = $('ambient-satellites');
+  resizeAmbientCanvas();
+
+  const specs = [
+    { centerX: -0.7436438870371587, centerY: 0.13182590420531197, scale_q24: 65536, maxIter: 350, pal: 0 },
+    { centerX: -0.7436438870371587, centerY: 0.13182590420531197, scale_q24: 16384, maxIter: 500, pal: 1 },
+    { centerX: -0.7436438870371587, centerY: 0.13182590420531197, scale_q24: 4096, maxIter: 650, pal: 2 },
+    { centerX: -0.7436438870371587, centerY: 0.13182590420531197, scale_q24: 1024, maxIter: 800, pal: 3 },
+  ];
+
+  ambientKeyframes = [];
+  for (const s of specs) {
+    const cfg: MosaicConfig = {
+      ...CONFIG,
+      tileSize: 256,
+      gridW: 1,
+      gridH: 1,
+      centerX: s.centerX,
+      centerY: s.centerY,
+      viewWidth: s.scale_q24 * 256 / Q24,
+      maxIter: s.maxIter,
+    };
+    const tile = await withGPULock(() => computeTileFixedAdaptive(gpuCtx, 0, 0, cfg, 0));
+    const canvas = renderTileToCanvas(tile.iter, tile.z2, 256, s.maxIter, {
+      paletteName: PALETTES_BY_INDEX[s.pal],
+      mappingMode: 'log',
+      cycleSpeed: 1,
+      edgeGlowIntensity: 0.8,
+      planetMode: false,
+      outputSize: 256,
+    });
+    ambientKeyframes.push({ canvas, scale_q24: s.scale_q24, centerX: s.centerX, centerY: s.centerY });
+  }
+
+  ambientStarted = performance.now();
+  startAmbientLoop();
+}
+
+function startAmbientLoop(): void {
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduceMotion) {
+    drawAmbientFrame(0);
+    return;
+  }
+  ambientActive = true;
+  cancelAnimationFrame(ambientRafId);
+
+  const loop = (now: number) => {
+    if (!ambientActive) return;
+    if (document.hidden) {
+      ambientRafId = requestAnimationFrame(loop);
+      return;
+    }
+    const cycleMs = 24000;
+    const raw = ((now - ambientStarted) % cycleMs) / cycleMs;
+    drawAmbientFrame(raw);
+    ambientRafId = requestAnimationFrame(loop);
+  };
+  ambientRafId = requestAnimationFrame(loop);
+}
+
+function stopAmbientWorld(): void {
+  ambientActive = false;
+  cancelAnimationFrame(ambientRafId);
+}
+
+function drawAmbientFrame(raw: number): void {
+  if (!ambientCanvas || !ambientContext || ambientKeyframes.length === 0) return;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const side = Math.max(w, h);
+
+  const t0 = performance.now();
+  ambientContext.clearRect(0, 0, w, h);
+
+  const pos = raw * (ambientKeyframes.length - 1);
+  const idx = Math.min(Math.max(0, ambientKeyframes.length - 2), Math.floor(pos));
+  const local = smoothStep(pos - idx);
+  const from = ambientKeyframes[idx];
+  const to = ambientKeyframes[Math.min(idx + 1, ambientKeyframes.length - 1)];
+  if (!from || !to) return;
+
+  const zoomFactor = 1 + local * 1.8;
+  const dw = side * zoomFactor;
+  const dh = side * zoomFactor;
+  const dx = (w - dw) / 2;
+  const dy = (h - dh) / 2;
+
+  ambientContext.globalAlpha = 1 - local * 0.4;
+  ambientContext.drawImage(from.canvas, dx, dy, dw, dh);
+  if (local > 0.05) {
+    ambientContext.globalAlpha = local;
+    ambientContext.drawImage(to.canvas, dx, dy, dw, dh);
+  }
+
+  const rad = ambientContext.createRadialGradient(
+    w / 2, h / 2, Math.min(w, h) * 0.16,
+    w / 2, h / 2, Math.max(w, h) * 0.72,
+  );
+  rad.addColorStop(0, 'rgba(0, 0, 0, 0.90)');
+  rad.addColorStop(0.48, 'rgba(0, 0, 0, 0.68)');
+  rad.addColorStop(1, 'rgba(0, 0, 0, 0.18)');
+  ambientContext.globalAlpha = 1;
+  ambientContext.fillStyle = rad;
+  ambientContext.fillRect(0, 0, w, h);
+
+  const elapsed = performance.now() - t0;
+  ambientDrawSamples.push(elapsed);
+  if (ambientDrawSamples.length > 250) ambientDrawSamples.shift();
+}
+
+export async function initSamplePlanets(gpuCtx: GPUFixedContext): Promise<void> {
+  const names = ['Priya', 'Rahul', 'Aman', 'Neha', 'Kuber', 'Artemis', 'Zenith'];
+  const tracks = [
+    { y: '6%', dur: '46s', delay: '-6s', scale: '0.65', scaleVal: 0.65, opacity: '0.65' },
+    { y: '15%', dur: '54s', delay: '-18s', scale: '0.50', scaleVal: 0.50, opacity: '0.55' },
+    { y: '9%', dur: '42s', delay: '-28s', scale: '0.70', scaleVal: 0.70, opacity: '0.70' },
+    { y: '17%', dur: '50s', delay: '-38s', scale: '0.55', scaleVal: 0.55, opacity: '0.60' },
+    { y: '80%', dur: '44s', delay: '-8s', scale: '0.75', scaleVal: 0.75, opacity: '0.70' },
+    { y: '87%', dur: '48s', delay: '-22s', scale: '0.50', scaleVal: 0.50, opacity: '0.55' },
+    { y: '82%', dur: '56s', delay: '-35s', scale: '0.60', scaleVal: 0.60, opacity: '0.65' },
+  ];
+
+  samplePlanetsCache = [];
+  ambientSatellites.replaceChildren();
+
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    const track = tracks[i];
+    const planet = await createPlanet(name, async (x, y, scale, maxIter) => {
+      const cfg: MosaicConfig = {
+        ...CONFIG,
+        tileSize: 64,
+        gridW: 1,
+        gridH: 1,
+        centerX: x / Q24,
+        centerY: y / Q24,
+        viewWidth: scale * 64 / Q24,
+        maxIter,
+      };
+      const res = await withGPULock(() => computeTileFixedAdaptive(gpuCtx, 0, 0, cfg, 0));
+      return res.iter;
+    });
+
+    const tileCfg: MosaicConfig = {
+      ...CONFIG,
+      tileSize: 256,
+      gridW: 1,
+      gridH: 1,
+      centerX: planet.centerXQ24 / Q24,
+      centerY: planet.centerYQ24 / Q24,
+      viewWidth: planet.scale_q24 * 256 / Q24,
+      maxIter: Math.min(800, planet.maxIter),
+    };
+    const tile = await withGPULock(() => computeTileFixedAdaptive(gpuCtx, 0, 0, tileCfg, 0));
+    const canvas = renderTileToCanvas(tile.iter, tile.z2, 256, tileCfg.maxIter, renderOptions(planet.paletteIndex, 128, true));
+
+    samplePlanetsCache.push({ name, planetId: planet.planetId, paletteIndex: planet.paletteIndex, canvas });
+
+    const item = document.createElement('div');
+    item.className = 'drift-satellite';
+    item.style.setProperty('--drift-y', track.y);
+    item.style.setProperty('--drift-dur', track.dur);
+    item.style.setProperty('--drift-delay', track.delay);
+    item.style.setProperty('--drift-scale', track.scale);
+    item.style.setProperty('--drift-opacity', track.opacity);
+    item.dataset.samplePlanet = name;
+
+    const pCanvas = document.createElement('canvas');
+    pCanvas.className = 'drift-planet';
+    pCanvas.width = 128;
+    pCanvas.height = 128;
+    const dim = Math.round(128 * track.scaleVal);
+    pCanvas.style.width = `${dim}px`;
+    pCanvas.style.height = `${dim}px`;
+    const cCtx = pCanvas.getContext('2d');
+    if (cCtx) cCtx.drawImage(canvas, 0, 0);
+
+    const label = document.createElement('span');
+    label.className = 'drift-name';
+    label.textContent = name;
+
+    item.append(pCanvas, label);
+    ambientSatellites.append(item);
+  }
+}
+
+function clearPreview(): void {
+  $<HTMLCanvasElement>('preview-planet').classList.remove('visible');
+  $('point').style.opacity = '1';
+  document.documentElement.style.setProperty('--accent', '#c9c9c9');
+  document.documentElement.style.setProperty('--accent-glow', 'rgba(200, 200, 200, 0.25)');
+  cachedPreviewPlanet = undefined;
+}
+
+function triggerGuard(reason: string): void {
+  livePreviewEnabled = false;
+  clearPreview();
+  setStatus('Live preview paused to keep typing smooth.');
+  $('app').dataset.previewGuardTriggered = JSON.stringify({ reason, timings: previewTimings });
+  console.warn('[mosaic-preview-guard]', reason);
+}
+
+export async function runLivePreview(name: string): Promise<PlanetParameters | undefined> {
+  if (!livePreviewEnabled) return undefined;
+  await ensureGPU();
+  if (!fixed) return undefined;
+
+  const runId = ++previewCounter;
+  const t0 = performance.now();
+
+  let normalized: string;
+  try {
+    normalized = normalizeName(name);
+  } catch {
+    clearPreview();
+    return undefined;
+  }
+
+  const isSlowFault = typeof window !== 'undefined' && window.location.search.includes('preview-perf=slow');
+  if (isSlowFault) {
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
+  }
+
+  let planet: PlanetParameters;
+  try {
+    planet = await createPlanet(normalized, async (x, y, scale, maxIter) => {
+      if (!fixed || runId !== previewCounter) throw new Error('Preview cancelled');
+      const cfg: MosaicConfig = {
+        ...CONFIG,
+        tileSize: 64,
+        gridW: 1,
+        gridH: 1,
+        centerX: x / Q24,
+        centerY: y / Q24,
+        viewWidth: scale * 64 / Q24,
+        maxIter,
+      };
+      const res = await withGPULock(() => computeTileFixedAdaptive(fixed!, 0, 0, cfg, 0));
+      return res.iter;
+    });
+  } catch (err) {
+    console.error('runLivePreview error:', err);
+    return undefined;
+  }
+
+  if (runId !== previewCounter || !fixed) return undefined;
+
+  const previewCfg: MosaicConfig = {
+    ...CONFIG,
+    tileSize: 192,
+    gridW: 1,
+    gridH: 1,
+    centerX: planet.centerXQ24 / Q24,
+    centerY: planet.centerYQ24 / Q24,
+    viewWidth: planet.scale_q24 * 192 / Q24,
+    maxIter: Math.min(800, planet.maxIter),
+  };
+
+  const tile = await withGPULock(() => computeTileFixedAdaptive(fixed!, 0, 0, previewCfg, 0));
+  if (runId !== previewCounter) return undefined;
+
+  const canvas = renderTileToCanvas(tile.iter, tile.z2, 192, previewCfg.maxIter, renderOptions(planet.paletteIndex, 192, true));
+
+  const previewCanvas = $<HTMLCanvasElement>('preview-planet');
+  const pCtx = previewCanvas.getContext('2d');
+  if (pCtx) {
+    pCtx.clearRect(0, 0, 192, 192);
+    pCtx.drawImage(canvas, 0, 0);
+  }
+
+  const accent = getBrightestAccent(planet.paletteIndex);
+  document.documentElement.style.setProperty('--accent', accent);
+  document.documentElement.style.setProperty('--accent-glow', `${accent}55`);
+
+  previewCanvas.classList.add('visible');
+  $('point').style.opacity = '0';
+
+  cachedPreviewPlanet = { name: normalized, parameters: planet };
+
+  const elapsed = performance.now() - t0 + (isSlowFault ? 450 : 0);
+  previewTimings.push(elapsed);
+
+  if (previewTimings.length === 1 && elapsed > 400) {
+    triggerGuard(`Preview compute ${Math.round(elapsed)} ms exceeded 400 ms on first probe.`);
+  } else if (elapsed > 600) {
+    consecutiveSlowPreviews++;
+    if (consecutiveSlowPreviews >= 2) {
+      triggerGuard(`Two consecutive previews exceeded 600 ms (${Math.round(elapsed)} ms).`);
+    }
+  } else {
+    consecutiveSlowPreviews = 0;
+  }
+
+  return planet;
 }
 
 function renderOptions(paletteIndex: number, outputSize: number, planetMode: boolean, name?: string, hash?: string) {
@@ -282,10 +649,10 @@ function makeParticleName(name: string): void {
     const fromX = (index - (total - 1) / 2) * 20;
     point.style.setProperty('--from-x', `${fromX}px`);
     point.style.setProperty('--from-y', '0px');
-    // Drift straight into the central light (#point) located at (50%, 32%)
-    // Since #gathering-particles is at (50%, 48%), target Y is -16svh
+    // Drift straight into central light (#point) located at (50%, 26%)
+    // Since #gathering-particles is at (50%, 48%), target Y is -22svh
     point.style.setProperty('--to-x', `${-fromX}px`);
-    point.style.setProperty('--to-y', '-16svh');
+    point.style.setProperty('--to-y', '-22svh');
     point.style.setProperty('--delay', `${Math.min(index * 24, 400)}ms`);
     parent.append(point);
   });
@@ -381,11 +748,11 @@ let aluRatePerPixelIter: number | undefined;
 
 async function calibrateGPU(ctx: GPUFixedContext): Promise<void> {
   const tOverhead0 = performance.now();
-  await computeTileFixedAdaptive(ctx, 42, 16, { ...CONFIG, maxIter: 1 }, 0);
+  await withGPULock(() => computeTileFixedAdaptive(ctx, 42, 16, { ...CONFIG, maxIter: 1 }, 0));
   baselineOverheadMs = performance.now() - tOverhead0;
 
   const tCalib0 = performance.now();
-  await computeTileFixedAdaptive(ctx, 42, 16, CONFIG, 0);
+  await withGPULock(() => computeTileFixedAdaptive(ctx, 42, 16, CONFIG, 0));
   const totalCalibMs = performance.now() - tCalib0;
 
   const aluCalibMs = Math.max(0.01, totalCalibMs - baselineOverheadMs);
@@ -406,7 +773,7 @@ async function calibratedTile(keyframe: DiveKeyframe): Promise<AdaptiveFixedTile
   let timeout = 0;
   try {
     return await Promise.race([
-      computeTileFixedAdaptive(context, 0, 0, cfg, estimate, 100, 32),
+      withGPULock(() => computeTileFixedAdaptive(context, 0, 0, cfg, estimate, 100, 32)),
       new Promise<never>((_, reject) => {
         timeout = window.setTimeout(() => {
           if (fixed?.device === context.device) fixed = undefined;
@@ -670,23 +1037,29 @@ async function startDive(event?: Event): Promise<void> {
 
   try {
     await ensureGPU();
-    const parameters = await createPlanet(normalizedName, async (x, y, scale, maxIter) => {
-      if (!fixed || thisRun !== runSequence) throw new Error('The GPU device was lost. Restart the dive to try again.');
-      const config: MosaicConfig = {
-        ...CONFIG,
-        tileSize: 64,
-        gridW: 1,
-        gridH: 1,
-        centerX: x / Q24,
-        centerY: y / Q24,
-        viewWidth: scale * 64 / Q24,
-        maxIter,
-      };
-      const probe = await computeTileFixedAdaptive(fixed, 0, 0, config, 0);
-      return probe.iter;
-    });
-    if (thisRun !== runSequence) return;
-    recordStage('engine result ready', { planetId: parameters.planetId, regionIndex: parameters.regionIndex });
+    let parameters: PlanetParameters;
+    if (cachedPreviewPlanet && cachedPreviewPlanet.name === normalizedName) {
+      parameters = cachedPreviewPlanet.parameters;
+      recordStage('engine result reused from preview', { planetId: parameters.planetId, regionIndex: parameters.regionIndex });
+    } else {
+      parameters = await createPlanet(normalizedName, async (x, y, scale, maxIter) => {
+        if (!fixed || thisRun !== runSequence) throw new Error('The GPU device was lost. Restart the dive to try again.');
+        const config: MosaicConfig = {
+          ...CONFIG,
+          tileSize: 64,
+          gridW: 1,
+          gridH: 1,
+          centerX: x / Q24,
+          centerY: y / Q24,
+          viewWidth: scale * 64 / Q24,
+          maxIter,
+        };
+        const probe = await withGPULock(() => computeTileFixedAdaptive(fixed!, 0, 0, config, 0));
+        return probe.iter;
+      });
+      if (thisRun !== runSequence) return;
+      recordStage('engine result ready', { planetId: parameters.planetId, regionIndex: parameters.regionIndex });
+    }
     setPlanetAccent(parameters.paletteIndex);
     const keyframes = makeDiveKeyframes(parameters);
     const keyframesStarted = performance.now();
@@ -777,9 +1150,7 @@ function tryAnotherName(): void {
   lastPlanet = undefined;
   $<HTMLInputElement>('planet-name').value = '';
   $('name-display').textContent = '';
-  document.documentElement.style.setProperty('--accent', '#c9c9c9');
-  $('point').style.backgroundColor = '#c9c9c9';
-  $('point').style.boxShadow = '0 0 8px 2px rgba(255, 255, 255, .3)';
+  clearPreview();
   $('app').removeAttribute('data-dive-debug');
   const url = new URL(window.location.href);
   url.searchParams.delete('n');
@@ -818,11 +1189,29 @@ async function initialize(): Promise<void> {
   if (!context) throw new Error('This browser cannot create the canvas used for the dive.');
   flightContext = context;
   resizeFlightCanvas();
-  resizeObserver = new ResizeObserver(resizeFlightCanvas);
+
+  ambientCanvas = $<HTMLCanvasElement>('ambient-canvas');
+  ambientSatellites = $('ambient-satellites');
+  resizeAmbientCanvas();
+
+  resizeObserver = new ResizeObserver(() => {
+    resizeFlightCanvas();
+    resizeAmbientCanvas();
+  });
   resizeObserver.observe($('app'));
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopAmbientWorld();
+    } else if (!diveActive) {
+      startAmbientLoop();
+    }
+  });
+
   window.addEventListener('pagehide', () => {
     runSequence++;
     stopSwell();
+    stopAmbientWorld();
     fixed?.device.destroy();
     resizeObserver?.disconnect();
     void audioContext?.close();
@@ -845,10 +1234,17 @@ async function initialize(): Promise<void> {
     $('name-control').classList.remove('invalid');
     assertStartButtonHitTest();
 
-    // Option (b): Keep preview neutral while typing; change light colour at dive start
-    document.documentElement.style.setProperty('--accent', '#c9c9c9');
-    $('point').style.backgroundColor = '#c9c9c9';
-    $('point').style.boxShadow = '0 0 8px 2px rgba(255, 255, 255, .3)';
+    clearTimeout(previewTimer);
+    if (!val.trim()) {
+      clearPreview();
+      return;
+    }
+
+    if (!livePreviewEnabled) return;
+
+    previewTimer = window.setTimeout(() => {
+      void runLivePreview(val);
+    }, 350);
   });
   $<HTMLButtonElement>('save-button').addEventListener('click', savePlanet);
   $<HTMLButtonElement>('again-button').addEventListener('click', tryAnotherName);
@@ -867,6 +1263,57 @@ async function initialize(): Promise<void> {
   selectScene('entry');
   setStatus('');
   assertStartButtonHitTest();
+
+  void ensureGPU().then(async () => {
+    if (fixed) {
+      await initAmbientWorld(fixed);
+      await initSamplePlanets(fixed);
+    }
+  }).catch((err: unknown) => {
+    console.warn('WebGPU init deferred for ambient world:', err);
+  });
+
+  (window as unknown as { __mosaicHomeTest?: unknown }).__mosaicHomeTest = {
+    getAmbientStats: () => {
+      const { median, p95 } = currentMedianAndP95(ambientDrawSamples);
+      return {
+        drawTimeMedianMs: median,
+        drawTimeP95Ms: p95,
+        sampleCount: ambientDrawSamples.length,
+        isActive: ambientActive,
+      };
+    },
+    getSamplePlanets: () => samplePlanetsCache.map((p) => ({
+      name: p.name,
+      planetId: p.planetId,
+      paletteIndex: p.paletteIndex,
+    })),
+    getPreviewPlanet: () => cachedPreviewPlanet,
+    isLivePreviewEnabled: () => livePreviewEnabled,
+    getPreviewTimings: () => [...previewTimings],
+    triggerPreviewManually: async (name: string) => {
+      await runLivePreview(name);
+      return cachedPreviewPlanet;
+    },
+    computeFinalPlanet: async (name: string) => {
+      await ensureGPU();
+      if (!fixed) throw new Error('No fixed GPU');
+      return createPlanet(normalizeName(name), async (x, y, scale, maxIter) => {
+        const config: MosaicConfig = {
+          ...CONFIG,
+          tileSize: 64,
+          gridW: 1,
+          gridH: 1,
+          centerX: x / Q24,
+          centerY: y / Q24,
+          viewWidth: scale * 64 / Q24,
+          maxIter,
+        };
+        const probe = await withGPULock(() => computeTileFixedAdaptive(fixed!, 0, 0, config, 0));
+        return probe.iter;
+      });
+    },
+  };
 
   (window as unknown as { __mosaicDiveTest?: unknown }).__mosaicDiveTest = {
     renderFrameAt: (raw: number) => {
