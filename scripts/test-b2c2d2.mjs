@@ -7,7 +7,7 @@ async function verifyB2C2D2() {
     args: ['--enable-unsafe-webgpu', '--use-gl=angle'],
   });
   const page = await browser.newPage();
-  await page.goto('http://127.0.0.1:4174/');
+  await page.goto('http://127.0.0.1:4174/dev/index.html');
   await page.waitForTimeout(500);
 
   // Click Run All Checks

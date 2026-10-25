@@ -63,3 +63,27 @@ test/
 - `vitest` — test runner for CPU unit tests
 
 All are dev dependencies. No runtime dependencies.
+
+## Part 4: The Dive & Planet Explorer
+
+### How to Run
+- `npm run dev`
+  - Public Dive entry: [http://localhost:5173/](http://localhost:5173/) (home screen straight into the dive)
+  - Engineering Verification Suite: [http://localhost:5173/dev/index.html](http://localhost:5173/dev/index.html)
+  - Planet Dev Explorer: [http://localhost:5173/dev/planet.html](http://localhost:5173/dev/planet.html)
+
+### How to Test
+- `npm test`
+  - Runs 42 CPU/unit tests with Vitest (no GPU required): limits, fixed-point math, palettes, name engine, and layout/mask contracts.
+- Automated Playwright end-to-end suites:
+  - `node scripts/audit-overlaps.mjs` — Bounding-box overlap audit across 5 viewports (360×640, 390×844, 768×1024, 1440×900, 1920×1080) for S1, S2, S3, S4, and Error state.
+  - `node scripts/test-special-names.mjs` — Validates button hit-tests and wrapping for 40-char, Devanagari, Arabic (RTL), and CJK names.
+  - `node scripts/test-transparency-and-caption.mjs` — Proves corner alpha 0 on planet canvas, pure `#000000` page, and caption strip export integrity.
+  - `node scripts/test-b2c2d2.mjs` — Fixed iteration hash verification in browser (B2 `0x985dade1`, C2 `0x329ac730`, D2 `0xa63eed4d`, heavy tile `0x8a1e2fc9`).
+  - `node scripts/test-fault-injection.mjs` — Fault-injection switches (`?fault=keyframe-timeout`, `?fault=device-lost`) and retry recovery.
+
+### How to Build
+- `npm run build`
+  - Runs `tsc` type-checking and `vite build` to output production static files into `dist/`.
+  - Generates `dist/index.html` (public dive), `dist/dev/index.html`, and `dist/dev/planet.html`.
+  - `scan.html` is kept strictly unpublished.

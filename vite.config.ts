@@ -9,8 +9,9 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(projectRoot, 'index.html'),
-        planet: resolve(projectRoot, 'planet.html'),
         dive: resolve(projectRoot, 'dive.html'),
+        devIndex: resolve(projectRoot, 'dev/index.html'),
+        devPlanet: resolve(projectRoot, 'dev/planet.html'),
       },
     },
   },
