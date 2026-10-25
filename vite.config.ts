@@ -4,15 +4,21 @@ import { resolve } from 'node:path';
 
 const projectRoot = process.cwd();
 
+const includeDevPages = process.env.VITE_DEV_PAGES === '1';
+
+const input: Record<string, string> = {
+  main: resolve(projectRoot, 'index.html'),
+};
+
+if (includeDevPages) {
+  input.devIndex = resolve(projectRoot, 'dev/index.html');
+  input.devPlanet = resolve(projectRoot, 'dev/planet.html');
+}
+
 export default defineConfig({
   build: {
     rollupOptions: {
-      input: {
-        main: resolve(projectRoot, 'index.html'),
-        dive: resolve(projectRoot, 'dive.html'),
-        devIndex: resolve(projectRoot, 'dev/index.html'),
-        devPlanet: resolve(projectRoot, 'dev/planet.html'),
-      },
+      input,
     },
   },
   plugins: [{

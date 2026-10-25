@@ -251,7 +251,8 @@ export async function previewPaletteIndex(name: string): Promise<number> {
 function setPlanetAccent(paletteIndex: number): void {
   const accent = getBrightestAccent(paletteIndex);
   document.documentElement.style.setProperty('--accent', accent);
-  flightCanvas.style.opacity = '1';
+  $('point').style.backgroundColor = accent;
+  $('point').style.boxShadow = `0 0 10px 3px ${accent}66`;
 }
 
 function renderOptions(paletteIndex: number, outputSize: number, planetMode: boolean, name?: string, hash?: string) {
@@ -499,7 +500,43 @@ async function computeFrames(
   return frames;
 }
 
+let lastPreparedFrames: PreparedFrame[] | undefined;
+
+export function renderFlightFrame(
+  frames: PreparedFrame[],
+  raw: number,
+  side: number,
+  landingPlanet?: { canvas: HTMLCanvasElement },
+): void {
+  const progress = smoothStep(Math.max(0, Math.min(1, raw)));
+  const position = progress * (frames.length - 1);
+  const index = Math.min(frames.length - 2, Math.floor(position));
+  const local = position >= frames.length - 1 ? 1 : smoothStep(position - index);
+  const from = frames[index];
+  const to = frames[Math.min(index + 1, frames.length - 1)];
+  const fromWidth = from.keyframe.scaleQ24 * PLANET_TILE_SIZE;
+  const toWidth = to.keyframe.scaleQ24 * PLANET_TILE_SIZE;
+  const currentWidth = fromWidth * (toWidth / fromWidth) ** local;
+  const currentX = Math.round(from.keyframe.centerXQ24 + (to.keyframe.centerXQ24 - from.keyframe.centerXQ24) * local);
+  const currentY = Math.round(from.keyframe.centerYQ24 + (to.keyframe.centerYQ24 - from.keyframe.centerYQ24) * local);
+
+  flightContext.globalAlpha = 1;
+  flightContext.fillStyle = '#000000';
+  flightContext.fillRect(0, 0, window.innerWidth, window.innerHeight);
+  drawKeyframe(from, currentWidth, currentX, currentY, side, 1 - local);
+  if (local > 0) drawFeatheredIncomingKeyframe(to, currentWidth, currentX, currentY, side, local);
+
+  if (landingPlanet && progress > 0.94) {
+    const fade = smoothStep((progress - 0.94) / 0.06);
+    flightContext.globalAlpha = fade;
+    const portraitSide = Math.min(window.innerWidth * 0.92, window.innerHeight * 0.52, 640);
+    flightContext.drawImage(landingPlanet.canvas, (window.innerWidth - portraitSide) / 2, (window.innerHeight - portraitSide) / 2, portraitSide, portraitSide);
+  }
+  flightContext.globalAlpha = 1;
+}
+
 function animateDive(frames: PreparedFrame[], runId: number): Promise<number[]> {
+  lastPreparedFrames = frames;
   return new Promise((resolve, reject) => {
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     frameSamples = [];
@@ -513,10 +550,7 @@ function animateDive(frames: PreparedFrame[], runId: number): Promise<number[]> 
     const side = Math.max(window.innerWidth, window.innerHeight);
 
     // Draw first frame immediately so canvas is never blank or waiting for rAF
-    flightContext.globalAlpha = 1;
-    flightContext.fillStyle = '#000000';
-    flightContext.fillRect(0, 0, window.innerWidth, window.innerHeight);
-    drawKeyframe(frames[0], frames[0].keyframe.scaleQ24 * PLANET_TILE_SIZE, frames[0].keyframe.centerXQ24, frames[0].keyframe.centerYQ24, side, 1);
+    renderFlightFrame(frames, 0, side, lastPlanet);
     if (!flightCanvas.dataset.firstFrameDrawn) {
       flightCanvas.dataset.firstFrameDrawn = 'true';
       recordStage('first frame drawn');
@@ -549,34 +583,10 @@ function animateDive(frames: PreparedFrame[], runId: number): Promise<number[]> 
         return;
       }
       const raw = Math.min(1, (now - started) / DIVE_DURATION_MS);
-      const progress = smoothStep(raw);
-      const position = progress * (frames.length - 1);
-      const index = Math.min(frames.length - 2, Math.floor(position));
-      const local = position >= frames.length - 1 ? 1 : smoothStep(position - index);
-      const from = frames[index];
-      const to = frames[Math.min(index + 1, frames.length - 1)];
-      const fromWidth = from.keyframe.scaleQ24 * PLANET_TILE_SIZE;
-      const toWidth = to.keyframe.scaleQ24 * PLANET_TILE_SIZE;
-      const currentWidth = fromWidth * (toWidth / fromWidth) ** local;
-      const currentX = Math.round(from.keyframe.centerXQ24 + (to.keyframe.centerXQ24 - from.keyframe.centerXQ24) * local);
-      const currentY = Math.round(from.keyframe.centerYQ24 + (to.keyframe.centerYQ24 - from.keyframe.centerYQ24) * local);
 
       // Measure exact draw execution time around draw calls (D2)
       const tDraw0 = performance.now();
-      flightContext.globalAlpha = 1;
-      flightContext.fillStyle = '#000000';
-      flightContext.fillRect(0, 0, window.innerWidth, window.innerHeight);
-      drawKeyframe(from, currentWidth, currentX, currentY, side, 1 - local);
-      if (local > 0) drawFeatheredIncomingKeyframe(to, currentWidth, currentX, currentY, side, local);
-
-      const landing = lastPlanet;
-      if (landing && progress > 0.94) {
-        const fade = smoothStep((progress - 0.94) / 0.06);
-        flightContext.globalAlpha = fade;
-        const portraitSide = Math.min(window.innerWidth * 0.92, window.innerHeight * 0.52, 640);
-        flightContext.drawImage(landing.canvas, (window.innerWidth - portraitSide) / 2, (window.innerHeight - portraitSide) / 2, portraitSide, portraitSide);
-      }
-      flightContext.globalAlpha = 1;
+      renderFlightFrame(frames, raw, side, lastPlanet);
       const tDrawElapsed = performance.now() - tDraw0;
       frameSamples.push(tDrawElapsed);
 
@@ -828,29 +838,17 @@ async function initialize(): Promise<void> {
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
   });
-  $<HTMLInputElement>('planet-name').addEventListener('input', async (event) => {
+  $<HTMLInputElement>('planet-name').addEventListener('input', (event) => {
     const val = (event.currentTarget as HTMLInputElement).value;
     $('name-display').textContent = val;
     setStatus('');
     $('name-control').classList.remove('invalid');
     assertStartButtonHitTest();
 
-    if (!val.trim()) {
-      document.documentElement.style.setProperty('--accent', '#c9c9c9');
-      $('point').style.backgroundColor = '#c9c9c9';
-      $('point').style.boxShadow = '0 0 8px 2px rgba(255, 255, 255, .3)';
-      return;
-    }
-
-    try {
-      const idx = await previewPaletteIndex(val);
-      const accent = getBrightestAccent(idx);
-      document.documentElement.style.setProperty('--accent', accent);
-      $('point').style.backgroundColor = accent;
-      $('point').style.boxShadow = `0 0 10px 3px ${accent}66`;
-    } catch {
-      // Keep previous color if name normalization fails or exceeds length limit
-    }
+    // Option (b): Keep preview neutral while typing; change light colour at dive start
+    document.documentElement.style.setProperty('--accent', '#c9c9c9');
+    $('point').style.backgroundColor = '#c9c9c9';
+    $('point').style.boxShadow = '0 0 8px 2px rgba(255, 255, 255, .3)';
   });
   $<HTMLButtonElement>('save-button').addEventListener('click', savePlanet);
   $<HTMLButtonElement>('again-button').addEventListener('click', tryAnotherName);
@@ -869,6 +867,16 @@ async function initialize(): Promise<void> {
   selectScene('entry');
   setStatus('');
   assertStartButtonHitTest();
+
+  (window as unknown as { __mosaicDiveTest?: unknown }).__mosaicDiveTest = {
+    renderFrameAt: (raw: number) => {
+      if (!lastPreparedFrames) throw new Error('No prepared frames available');
+      const side = Math.max(window.innerWidth, window.innerHeight);
+      renderFlightFrame(lastPreparedFrames, raw, side, lastPlanet);
+    },
+    getPreparedFrames: () => lastPreparedFrames,
+    getLastPlanet: () => lastPlanet,
+  };
 }
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {

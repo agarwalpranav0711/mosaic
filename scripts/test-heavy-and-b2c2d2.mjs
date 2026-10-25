@@ -7,7 +7,7 @@ async function testHashes() {
     args: ['--enable-unsafe-webgpu', '--use-gl=angle'],
   });
   const page = await browser.newPage();
-  await page.goto('http://127.0.0.1:4174/dive.html');
+  await page.goto('http://127.0.0.1:4174/');
 
   const results = await page.evaluate(async () => {
     const { initGPUFixed, computeTileFixed, computeTileFixedChunked } = await import('/src/gpuTileFixed.ts');

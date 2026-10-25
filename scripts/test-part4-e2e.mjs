@@ -40,7 +40,7 @@ async function runE2E() {
     const context = await browser.newContext({ viewport: { width: vp.w, height: vp.h } });
     const page = await context.newPage();
 
-    await page.goto('http://127.0.0.1:4174/dive.html');
+    await page.goto('http://127.0.0.1:4174/');
     await page.waitForTimeout(300);
 
     // S1: Idle state
@@ -123,7 +123,7 @@ async function runE2E() {
   {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const page = await context.newPage();
-    await page.goto('http://127.0.0.1:4174/dive.html');
+    await page.goto('http://127.0.0.1:4174/');
     await page.locator('#planet-name').fill('Priya');
     const btnBox = await page.locator('#start-button').boundingBox();
     await page.mouse.click(btnBox.x + btnBox.width / 2, btnBox.y + btnBox.height / 2);
@@ -141,7 +141,7 @@ async function runE2E() {
   {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const page = await context.newPage();
-    await page.goto('http://127.0.0.1:4174/dive.html');
+    await page.goto('http://127.0.0.1:4174/');
     await page.locator('#planet-name').fill('Kuber');
     const btnBox = await page.locator('#start-button').boundingBox();
     await page.mouse.click(btnBox.x + btnBox.width / 2, btnBox.y + btnBox.height / 2);
@@ -159,7 +159,7 @@ async function runE2E() {
   {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const page = await context.newPage();
-    await page.goto('http://127.0.0.1:4174/dive.html?fault=keyframe-timeout');
+    await page.goto('http://127.0.0.1:4174/?fault=keyframe-timeout');
     await page.locator('#planet-name').fill('Priya');
     const btnBox = await page.locator('#start-button').boundingBox();
     await page.mouse.click(btnBox.x + btnBox.width / 2, btnBox.y + btnBox.height / 2);
@@ -179,7 +179,7 @@ async function runE2E() {
   {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const page = await context.newPage();
-    await page.goto('http://127.0.0.1:4174/dive.html?fault=device-lost');
+    await page.goto('http://127.0.0.1:4174/?fault=device-lost');
     await page.locator('#planet-name').fill('Priya');
     const btnBox = await page.locator('#start-button').boundingBox();
     await page.mouse.click(btnBox.x + btnBox.width / 2, btnBox.y + btnBox.height / 2);

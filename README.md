@@ -84,6 +84,8 @@ All are dev dependencies. No runtime dependencies.
 
 ### How to Build
 - `npm run build`
-  - Runs `tsc` type-checking and `vite build` to output production static files into `dist/`.
-  - Generates `dist/index.html` (public dive), `dist/dev/index.html`, and `dist/dev/planet.html`.
-  - `scan.html` is kept strictly unpublished.
+  - Default production build: publishes strictly the public dive (`dist/index.html`) and associated optimized chunks. Engineering pages are omitted from default production builds.
+- `VITE_DEV_PAGES=1 npm run build`
+  - Opt-in engineering build: adds `/dev/index.html` and `/dev/planet.html` to `dist/dev/`.
+  - Windows CMD: `set VITE_DEV_PAGES=1&& npm run build`
+  - Windows PowerShell: `$env:VITE_DEV_PAGES="1"; npm run build`

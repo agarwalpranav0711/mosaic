@@ -7,7 +7,7 @@ async function measurePriyaTime() {
     args: ['--enable-unsafe-webgpu', '--use-gl=angle'],
   });
   const page = await browser.newPage();
-  await page.goto('http://127.0.0.1:4174/dive.html');
+  await page.goto('http://127.0.0.1:4174/');
 
   const report = await page.evaluate(async () => {
     const input = document.getElementById('planet-name');
