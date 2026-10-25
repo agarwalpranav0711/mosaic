@@ -1,91 +1,92 @@
-# Mosaic — Part 1: One-Tile Shader
+# Mandelbrot Mosaic
 
-## What this is
+A deterministic procedural planet dive engine running on WebGPU. Visitors type any name, and the browser computes a unique planetary destination in the Mandelbrot set and falls into it.
 
-Part 1 of Mosaic: a WebGPU compute shader that computes one tile of a Mandelbrot set image, verified against a CPU reference implementation.
+---
 
-This is the foundation layer. It proves the GPU can compute tiles that match the CPU output, measures how long one tile takes, and measures how big the result is when compressed. Later parts will build a shared canvas, a backend, and a live event on top of this.
+## What It Is
 
-## What Mosaic is (and is not)
+Mosaic generates procedural celestial bodies located at specific coordinates within the Mandelbrot set. Every name consistently maps to the same location, zoom depth, color palette, and visual features across runs.
 
-Mosaic is a web page where every visitor's GPU computes one tile of a large image using WebGPU. The tiles appear live on a shared canvas that everyone watches fill in together. No install, no account.
+There is no backend server rendering tiles, no database storing images, and no accounts or analytics. All computation happens locally in the browser via client-side WebGPU compute shaders.
 
-**Honest disclaimer:** the computation does not *need* to be distributed. A single modern GPU could render the whole image in seconds. The distributed aspect is a participation mechanic — like r/place — not a necessity. The product is the feeling of "my GPU drew that corner" and the shared experience of watching the image fill in.
+---
 
-## How to run
+## How It Works
 
+1. **Name Normalization & Hashing:**
+   The visitor's input is normalized (NFKC normalization, trimmed, collapsed whitespace, stripped control characters, max 40 characters) and hashed using SHA-256 (`mosaic-v1:<normalized_name>`).
+
+2. **Deterministic Parameter Derivation:**
+   Bytes from the SHA-256 digest select:
+   - One of 300 curated regions from `regions.json`
+   - Center coordinates $(x, y)$ inside the region
+   - Magnification scale
+   - Maximum iteration count (up to 2,000)
+   - One of 4 atmospheric color palettes (Deep Sea, Ember, Aurora, Ice)
+
+3. **Fixed-Point GPU Compute Shader (Q8.24):**
+   Instead of floating-point arithmetic (which varies across GPU vendors and compiler optimizations), Mandelbrot iterations are evaluated using signed 32-bit integers in Q8.24 fixed-point format ($z_{real}, z_{imag}$ where 1.0 = $2^{24} = 16,777,216$). This guarantees bit-identical iteration counts regardless of whether the shader runs on NVIDIA, AMD, Intel, or Apple silicon.
+
+4. **Atmospheric Rendering:**
+   The resulting tile is passed through a custom renderer that applies:
+   - Logarithmic iteration smoothing with $|z|^2$ escape value
+   - Edge glow enhancement along boundary filaments
+   - Circular planetary cropping with limb darkening and Rayleigh atmosphere halo
+   - Deterministic procedural starfield background
+
+---
+
+## Why Fixed-Point Matters
+
+Standard 32-bit floating-point (`f32`) operations are non-associative: $(a + b) + c \ne a + (b + c)$ in edge cases, and fused multiply-add (FMA) instructions differ between GPU hardware architectures. In deep fractal iterations, minute numerical deviations compound exponentially, causing different GPUs to produce different iteration counts for the exact same coordinate.
+
+By enforcing integer arithmetic via Q8.24 fixed-point representations in WGSL compute shaders, every GPU computes the exact same mathematical results pixel-for-pixel, producing identical FNV-1a hash fingerprints across devices.
+
+---
+
+## Limitations
+
+- **WebGPU Requirement:** Requires a modern browser with WebGPU support (Chrome 113+, Edge 113+, or Safari 26+). Browsers without WebGPU show a fallback message.
+- **Curated Regions:** The catalogue contains 300 curated regions in `src/regions.json`. Coordinates outside these regions are not sampled.
+- **Client Computation:** Rendering takes 1 to 3 seconds of local GPU time depending on device speed. Devices with very low GPU throughput will experience slower keyframe preparation.
+- **No Per-Name Cloud OG Cards:** In v1, shared links use a static high-resolution preview card (`og-preview.png`). Unique per-name cards are generated on-demand as downloadable 1080×1350 PNG files on the client.
+
+---
+
+## Devices Tested So Far
+
+- **Discrete GPU:** NVIDIA GeForce RTX 3050 Laptop GPU (Windows 11, Google Chrome 155, Direct3D12 backend via ANGLE)
+
+### What Has NOT Been Tested
+
+- Physical iOS / iPadOS devices (Safari WebGPU)
+- Physical Android smartphones (ARM Mali / Qualcomm Adreno GPUs)
+- Low-end mobile SoCs or software rasterizers (SwiftShader / WARP)
+- Linux / Wayland WebGPU stacks
+
+---
+
+## Running Locally
+
+### Development Server
 ```bash
 npm install
 npm run dev
 ```
+Open [http://localhost:5173/](http://localhost:5173/) to enter the dive.
 
-Open [http://localhost:5173](http://localhost:5173) in a browser with WebGPU support (Chrome 113+, Edge 113+, or Safari 26+).
-
-Click **"Run Part 1 Tests"** and check that all tests pass.
-
-## How to run CPU unit tests
-
+### Run Verification Tests
 ```bash
-npm run test
+# Run unit test suite (42 tests in Node, no GPU required)
+npm test
+
+# Run build verification
+npm run build
 ```
 
-This runs the vitest test suite (`test/cpuReference.test.ts`) in Node — no GPU required.
+---
 
-## What a pass looks like
+## License
 
-- All checks A through E show **PASS**
-- Checks B, C, D show ≥99.0% exact match against the f32-style CPU reference
-- Check E confirms determinism (two GPU runs produce identical output)
-- Check F shows benchmark numbers (median ms per tile, tiles/sec)
-- The visual section shows GPU and CPU tiles side-by-side with a diff map
-- Compression experiment shows tile sizes in bytes
-
-## Project structure
-
-```
-index.html              Test page
-src/
-  config.ts             All tunable constants
-  cpuReference.ts       CPU reference (f32-style + f64 ground truth)
-  gpuTile.ts            WebGPU setup + computeTile function
-  shader.wgsl.ts        WGSL compute shader (exported as string)
-  compare.ts            Tile comparison helpers
-  main.ts               Test page logic
-test/
-  cpuReference.test.ts  Unit tests (Node, no GPU)
-```
-
-## Dependencies
-
-- `vite` — dev server and bundler
-- `typescript` — type checking
-- `@webgpu/types` — TypeScript type definitions for the WebGPU API
-- `vitest` — test runner for CPU unit tests
-
-All are dev dependencies. No runtime dependencies.
-
-## Part 4: The Dive & Planet Explorer
-
-### How to Run
-- `npm run dev`
-  - Public Dive entry: [http://localhost:5173/](http://localhost:5173/) (home screen straight into the dive)
-  - Engineering Verification Suite: [http://localhost:5173/dev/index.html](http://localhost:5173/dev/index.html)
-  - Planet Dev Explorer: [http://localhost:5173/dev/planet.html](http://localhost:5173/dev/planet.html)
-
-### How to Test
-- `npm test`
-  - Runs 42 CPU/unit tests with Vitest (no GPU required): limits, fixed-point math, palettes, name engine, and layout/mask contracts.
-- Automated Playwright end-to-end suites:
-  - `node scripts/audit-overlaps.mjs` — Bounding-box overlap audit across 5 viewports (360×640, 390×844, 768×1024, 1440×900, 1920×1080) for S1, S2, S3, S4, and Error state.
-  - `node scripts/test-special-names.mjs` — Validates button hit-tests and wrapping for 40-char, Devanagari, Arabic (RTL), and CJK names.
-  - `node scripts/test-transparency-and-caption.mjs` — Proves corner alpha 0 on planet canvas, pure `#000000` page, and caption strip export integrity.
-  - `node scripts/test-b2c2d2.mjs` — Fixed iteration hash verification in browser (B2 `0x985dade1`, C2 `0x329ac730`, D2 `0xa63eed4d`, heavy tile `0x8a1e2fc9`).
-  - `node scripts/test-fault-injection.mjs` — Fault-injection switches (`?fault=keyframe-timeout`, `?fault=device-lost`) and retry recovery.
-
-### How to Build
-- `npm run build`
-  - Default production build: publishes strictly the public dive (`dist/index.html`) and associated optimized chunks. Engineering pages are omitted from default production builds.
-- `VITE_DEV_PAGES=1 npm run build`
-  - Opt-in engineering build: adds `/dev/index.html` and `/dev/planet.html` to `dist/dev/`.
-  - Windows CMD: `set VITE_DEV_PAGES=1&& npm run build`
-  - Windows PowerShell: `$env:VITE_DEV_PAGES="1"; npm run build`
+MIT License. See [LICENSE](LICENSE) for details.
