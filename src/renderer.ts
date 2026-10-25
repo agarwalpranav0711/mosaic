@@ -121,13 +121,12 @@ export function renderTileToCanvas(
   const planetR = outSize * 0.40;
   const atmosWidth = outSize * 0.085;
 
-  // Pre-draw starfield if planet mode is active
+  // Pre-draw starfield if planet mode is active (transparent canvas background)
   const starCanvas = document.createElement('canvas');
   starCanvas.width = outSize;
   starCanvas.height = outSize;
   const starCtx = starCanvas.getContext('2d')!;
-  starCtx.fillStyle = '#06080d';
-  starCtx.fillRect(0, 0, outSize, outSize);
+  starCtx.clearRect(0, 0, outSize, outSize);
 
   if (opts.planetMode) {
     for (const star of STATIC_STARFIELD) {
@@ -156,24 +155,34 @@ export function renderTileToCanvas(
         const dist = Math.hypot(dx, dy);
 
         if (dist > planetR) {
-          // Outside planet disk: cosmic starfield + soft atmosphere halo
-          let r = starData[pixelIdx];
-          let g = starData[pixelIdx + 1];
-          let b = starData[pixelIdx + 2];
+          // Outside planet disk: cosmic starfield + soft atmosphere halo with alpha transparency
+          const starR = starData[pixelIdx];
+          const starG = starData[pixelIdx + 1];
+          const starB = starData[pixelIdx + 2];
+          const starA = starData[pixelIdx + 3] / 255;
 
           const d = dist - planetR;
+          let halo = 0;
           if (d < atmosWidth) {
-            // Soft atmosphere halo exponential decay
-            const halo = Math.exp(-3.2 * (d / atmosWidth)) * 0.85;
-            r = Math.min(255, Math.round(r + brightestColor.r * halo));
-            g = Math.min(255, Math.round(g + brightestColor.g * halo));
-            b = Math.min(255, Math.round(b + brightestColor.b * halo));
+            halo = Math.exp(-3.2 * (d / atmosWidth)) * 0.85;
           }
 
-          data[pixelIdx + 0] = r;
-          data[pixelIdx + 1] = g;
-          data[pixelIdx + 2] = b;
-          data[pixelIdx + 3] = 255;
+          const totalAlpha = Math.min(1.0, starA + halo);
+          if (totalAlpha > 0.001) {
+            const r = Math.min(255, Math.round(starR * starA + brightestColor.r * halo));
+            const g = Math.min(255, Math.round(starG * starA + brightestColor.g * halo));
+            const b = Math.min(255, Math.round(starB * starA + brightestColor.b * halo));
+            data[pixelIdx + 0] = r;
+            data[pixelIdx + 1] = g;
+            data[pixelIdx + 2] = b;
+            data[pixelIdx + 3] = Math.min(255, Math.round(totalAlpha * 255));
+          } else {
+            // Completely transparent outside halo and stars
+            data[pixelIdx + 0] = 0;
+            data[pixelIdx + 1] = 0;
+            data[pixelIdx + 2] = 0;
+            data[pixelIdx + 3] = 0;
+          }
           continue;
         }
       }

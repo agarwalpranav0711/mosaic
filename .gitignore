@@ -24,3 +24,6 @@ src/regions.progress.json
 *.njsproj
 *.sln
 *.sw?
+
+# Generated test screenshots
+screens/
