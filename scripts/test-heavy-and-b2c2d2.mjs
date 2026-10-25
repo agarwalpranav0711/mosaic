@@ -34,13 +34,13 @@ async function testHashes() {
     const hashChunked = fnv1a32(u16LittleEndian(heavyChunked.iter));
 
     // 2. Baseline checks B2, C2, D2
-    const b2 = await computeTileFixed(ctx, 0, 0, CONFIG);
+    const b2 = await computeTileFixed(ctx, 42, 16, CONFIG);
     const hashB2 = fnv1a32(u16LittleEndian(b2.iter));
 
-    const c2 = await computeTileFixed(ctx, 32, 32, CONFIG);
+    const c2 = await computeTileFixed(ctx, 49, 41, CONFIG);
     const hashC2 = fnv1a32(u16LittleEndian(c2.iter));
 
-    const d2 = await computeTileFixed(ctx, 63, 63, CONFIG);
+    const d2 = await computeTileFixed(ctx, 49, 22, CONFIG);
     const hashD2 = fnv1a32(u16LittleEndian(d2.iter));
 
     return {

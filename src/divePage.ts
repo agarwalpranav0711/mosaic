@@ -726,7 +726,7 @@ async function ensureGPU(): Promise<void> {
   if (fixed) return;
   const isNoGpuFault = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('nogpu') === '1';
   if (!navigator.gpu || isNoGpuFault) {
-    showWebGPUFailure('This needs WebGPU. Try a recent Chrome or Edge, or Safari 26 or newer.');
+    showWebGPUFailure('Try a recent Chrome or Edge, or Safari 26 or newer.');
     return;
   }
   let adapter: GPUAdapter | null = null;
@@ -736,7 +736,7 @@ async function ensureGPU(): Promise<void> {
     adapter = null;
   }
   if (!adapter) {
-    showWebGPUFailure('This needs WebGPU. Try a recent Chrome or Edge, or Safari 26 or newer.');
+    showWebGPUFailure('Try a recent Chrome or Edge, or Safari 26 or newer.');
     return;
   }
   try {
@@ -1415,6 +1415,19 @@ async function initialize(): Promise<void> {
   $<HTMLButtonElement>('share-button').addEventListener('click', () => { void sharePlanet(); });
   $<HTMLButtonElement>('again-button').addEventListener('click', tryAnotherName);
   $<HTMLButtonElement>('restart-button').addEventListener('click', () => { void restart(); });
+  const copyBtn = document.getElementById('copy-link-btn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      void navigator.clipboard?.writeText(window.location.href).then(() => {
+        const prev = copyBtn.textContent;
+        copyBtn.textContent = 'Link copied!';
+        setTimeout(() => { copyBtn.textContent = prev || 'Copy link'; }, 2000);
+      }).catch(() => {
+        copyBtn.textContent = 'Link copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy link'; }, 2000);
+      });
+    });
+  }
   $<HTMLButtonElement>('sound-toggle').addEventListener('click', () => {
     audioEnabled = !audioEnabled;
     updateSoundButton();

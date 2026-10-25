@@ -15,14 +15,36 @@ if (includeDevPages) {
   input.devPlanet = resolve(projectRoot, 'dev/planet.html');
 }
 
+import { SITE_URL } from './src/config.ts';
+
+function siteUrlPlugin() {
+  return {
+    name: 'site-url-transform',
+    transformIndexHtml(html: string) {
+      if (!SITE_URL || !SITE_URL.trim()) {
+        throw new Error('SITE_URL in src/config.ts is empty.');
+      }
+      if (SITE_URL.includes('mosaic.vercel.app')) {
+        throw new Error(`SITE_URL still contains placeholder 'mosaic.vercel.app': ${SITE_URL}`);
+      }
+      const cleanUrl = SITE_URL.replace(/\/+$/u, '');
+      return html
+        .replace(/__SITE_URL__/gu, cleanUrl)
+        .replace(/https:\/\/mosaic\.vercel\.app/gu, cleanUrl);
+    },
+  };
+}
+
 export default defineConfig({
   build: {
     rollupOptions: {
       input,
     },
   },
-  plugins: [{
-    name: 'region-scan-progress',
+  plugins: [
+    siteUrlPlugin(),
+    {
+      name: 'region-scan-progress',
     configureServer(server) {
       server.middlewares.use('/__region-progress', (request, response, next) => {
         if (request.method !== 'POST') {

@@ -22,7 +22,7 @@ export interface MosaicConfig {
   tolerance: { minExactMatchPct: number };
 }
 
-export const SITE_URL = 'https://mosaic.vercel.app';
+export const SITE_URL = 'https://mosaic-neon.vercel.app';
 
 /**
  * All tunable constants for Mosaic, Part 1 & 1.5.
