@@ -439,13 +439,13 @@ function drawAmbientFrame(raw: number): void {
 export async function initSamplePlanets(gpuCtx: GPUFixedContext): Promise<void> {
   const names = ['Priya', 'Rahul', 'Aman', 'Neha', 'Kuber', 'Artemis', 'Zenith'];
   const tracks = [
-    { y: '6%', dur: '46s', delay: '-6s', scale: '0.65', scaleVal: 0.65, opacity: '0.65' },
-    { y: '15%', dur: '54s', delay: '-18s', scale: '0.50', scaleVal: 0.50, opacity: '0.55' },
-    { y: '9%', dur: '42s', delay: '-28s', scale: '0.70', scaleVal: 0.70, opacity: '0.70' },
-    { y: '17%', dur: '50s', delay: '-38s', scale: '0.55', scaleVal: 0.55, opacity: '0.60' },
-    { y: '80%', dur: '44s', delay: '-8s', scale: '0.75', scaleVal: 0.75, opacity: '0.70' },
-    { y: '87%', dur: '48s', delay: '-22s', scale: '0.50', scaleVal: 0.50, opacity: '0.55' },
-    { y: '82%', dur: '56s', delay: '-35s', scale: '0.60', scaleVal: 0.60, opacity: '0.65' },
+    { y: '4%', dur: '46s', delay: '-6s', scale: '0.65', scaleVal: 0.65, opacity: '0.65' },
+    { y: '8%', dur: '54s', delay: '-18s', scale: '0.50', scaleVal: 0.50, opacity: '0.55' },
+    { y: '5%', dur: '42s', delay: '-28s', scale: '0.70', scaleVal: 0.70, opacity: '0.70' },
+    { y: '10%', dur: '50s', delay: '-38s', scale: '0.55', scaleVal: 0.55, opacity: '0.60' },
+    { y: '84%', dur: '44s', delay: '-8s', scale: '0.75', scaleVal: 0.75, opacity: '0.70' },
+    { y: '88%', dur: '48s', delay: '-22s', scale: '0.50', scaleVal: 0.50, opacity: '0.55' },
+    { y: '86%', dur: '56s', delay: '-35s', scale: '0.60', scaleVal: 0.60, opacity: '0.65' },
   ];
 
   samplePlanetsCache = [];
