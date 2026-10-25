@@ -2,7 +2,18 @@ import { defineConfig } from 'vite';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
+const projectRoot = process.cwd();
+
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(projectRoot, 'index.html'),
+        planet: resolve(projectRoot, 'planet.html'),
+        dive: resolve(projectRoot, 'dive.html'),
+      },
+    },
+  },
   plugins: [{
     name: 'region-scan-progress',
     configureServer(server) {
